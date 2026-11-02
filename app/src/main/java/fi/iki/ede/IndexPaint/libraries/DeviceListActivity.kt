@@ -1,3 +1,9 @@
+/*
+ * Portions adapted from the Android Open Source Project BluetoothChat sample.
+ * Copyright (C) 2009 The Android Open Source Project
+ * Licensed under the Apache License, Version 2.0; see LICENSE-APACHE-2.0.
+ * Modernized and adapted for Index Paint.
+ */
 package fi.iki.ede.IndexPaint.libraries
 
 import android.app.Activity
