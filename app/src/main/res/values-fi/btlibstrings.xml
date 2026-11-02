@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<resources>
+
+    <!-- BluetoothChat -->
+    <string name="send">Lähetä</string>
+    <string name="not_connected">Puhelintasi ei ole yhdistetty toiseen</string>
+    <string name="bt_not_enabled_leaving">Bluetooth ei ole päällä. Poistutaan BluetoothChatistä.</string>
+    <string name="title_connecting">yhdistetään...</string>
+    <string name="title_connected_to">yhdistetty: </string>
+    <string name="title_not_connected">ei yhdistetty</string>
+    <!-- DeviceListActivity -->
+    <string name="scanning">Etsitään IndexPaint-laitteita…</string>
+    <string name="select_device">Valitse IndexPaint-laite</string>
+    <string name="none_paired">Ei paritettuja laitteita</string>
+    <string name="none_found">IndexPaint-laitteita ei löytynyt</string>
+    <string name="none_found_paired">Uusia laitteita ei löytynyt. Valitse paritettu laite yllä.</string>
+    <string name="connection_help">Valitse toinen puhelin vain toisella näytöllä. Toinen näyttö sulkeutuu automaattisesti yhteyden muodostuttua.</string>
+    <string name="title_paired_devices">Paritetut laitteet</string>
+    <string name="title_other_devices">Lähellä olevat IndexPaint-laitteet</string>
+    <string name="button_scan">Etsi IndexPaint-laitteita</string>
+    <string name="unnamed_indexpaint_device">Nimetön IndexPaint-laite</string>
+    <!-- Options Menu -->
+    <string name="connect">Yhdistä puhelimeen</string>
+    <string name="discoverable">Tee löydettäväksi</string>
+
+</resources>

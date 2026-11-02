@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/mnuConnections"
+        android:icon="@android:drawable/ic_menu_add"
+        android:title="@string/mnuConnections">
+        <menu>
+            <item
+                android:id="@+id/mnuConnect"
+                android:title="@string/mnuConnect"></item>
+            <item
+                android:id="@+id/mnuDisconnect"
+                android:title="@string/mnuDisconnect"></item>
+        </menu>
+    </item>
+    <item
+        android:id="@+id/mnuFilters"
+        android:title="@string/mnuFilters">
+        <menu>
+            <group
+                android:id="@+id/grpFilters"
+                android:checkableBehavior="single">
+                <item
+                    android:id="@+id/mnuFilterBlur"
+                    android:title="@string/mnuFilterBlur"></item>
+            </group>
+        </menu>
+    </item>
+    <item
+        android:id="@+id/mnuMisc"
+        android:title="@string/mnuMisc">
+        <menu>
+            <item
+                android:id="@+id/mnuPaperSize"
+                android:title="@string/mnuPaperSize">
+                <menu>
+                    <item android:id="@+id/mnuPaperA4" android:title="@string/mnuPaperA4" />
+                    <item android:id="@+id/mnuPaperLetter" android:title="@string/mnuPaperLetter" />
+                </menu>
+            </item>
+            <item
+                android:id="@+id/mnuZoomIn"
+                android:title="@string/mnuZoomIn" />
+            <item
+                android:id="@+id/mnuZoomOut"
+                android:title="@string/mnuZoomOut" />
+            <item
+                android:id="@+id/mnuZoomReset"
+                android:title="@string/mnuZoomReset" />
+            <item
+                android:id="@+id/mnuMiscOpen"
+                android:icon="@android:drawable/ic_menu_gallery"
+                android:title="@string/mnuMiscOpen"></item>
+            <item
+                android:id="@+id/mnuMiscSave"
+                android:icon="@android:drawable/ic_menu_save"
+                android:title="@string/mnuMiscSave"></item>
+            <item
+                android:id="@+id/mnuMiscClear"
+                android:title="@string/mnuMiscClear"></item>
+            <item
+                android:id="@+id/mnuMiscShareAs"
+                android:icon="@android:drawable/ic_menu_share"
+                android:title="@string/mnuMiscShareAs" />
+            <item
+                android:id="@+id/mnuFoldFinish"
+                android:title="@string/mnuFoldFinish" />
+            <item
+                android:id="@+id/mnuToggleFoldHints"
+                android:title="@string/mnuHideFoldHints" />
+        </menu>
+    </item>
+
+</menu>

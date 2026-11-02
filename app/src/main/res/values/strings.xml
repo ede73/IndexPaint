@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<resources>
+    <string name="app_name">Index Paint</string>
+    <string name="COLOR_PICK_COLOR">Pick a color</string>
+    <string name="mnuConnections">Connections</string>
+    <string name="mnuDisconnect">Disconnect</string>
+    <string name="mnuConnect">Connect</string>
+    <string name="mnuFilters">Filters</string>
+    <string name="mnuFilterBlur">Blur</string>
+    <string name="mnuMisc">Misc</string>
+    <string name="mnuPaperSize">Paper size</string>
+    <string name="mnuPaperA4">A4</string>
+    <string name="mnuPaperLetter">US Letter</string>
+    <string name="mnuZoomIn">Zoom in</string>
+    <string name="mnuZoomOut">Zoom out</string>
+    <string name="mnuZoomReset">Fit to screen</string>
+    <string name="mnuMiscOpen">Open...</string>
+    <string name="mnuMiscSave">Save...</string>
+    <string name="mnuMiscClear">Clear image</string>
+    <string name="mnuMiscShareAs">Share image as</string>
+    <string name="mnuFoldFinish">Reveal whole drawing…</string>
+    <string name="mnuHideFoldHints">Hide handoff hints</string>
+    <string name="mnuShowFoldHints">Show handoff hints</string>
+    <string name="txtChooseImage">Choose image</string>
+</resources>

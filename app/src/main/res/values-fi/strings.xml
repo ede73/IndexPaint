@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<resources>
+
+    <string name="app_name">Index Paint</string>
+    <string name="COLOR_PICK_COLOR">Valitse väri</string>
+    <string name="mnuConnect">Yhdistä</string>
+    <string name="mnuMiscClear">Tyhjennä kuva</string>
+    <string name="mnuConnections">Yhteydet</string>
+    <string name="mnuMisc">Muut</string>
+    <string name="mnuFilters">Suodattimet</string>
+    <string name="mnuMiscOpen">Avaa...</string>
+    <string name="mnuMiscSave">Tallenna...</string>
+    <string name="mnuDisconnect">Katkaise</string>
+    <string name="mnuFilterBlur">Sumenna</string>
+    <string name="mnuMiscShareAs">Jaa kuva</string>
+    <string name="mnuFoldFinish">Paljasta koko piirros…</string>
+    <string name="mnuHideFoldHints">Piilota vuorovihjeet</string>
+    <string name="mnuShowFoldHints">Näytä vuorovihjeet</string>
+    <string name="txtChooseImage">Valitse kuva</string>
+
+</resources>

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<resources>
+    <!--  BluetoothChat -->
+    <string name="send">Send</string>
+    <string name="not_connected">You are not connected to a device</string>
+    <string name="bt_not_enabled_leaving">Bluetooth was not enabled. Leaving Bluetooth Chat.</string>
+    <string name="title_connecting">connecting...</string>
+    <string name="title_connected_to">connected: </string>
+    <string name="title_not_connected">not connected</string>
+    <!--  DeviceListActivity -->
+    <string name="scanning">Looking for IndexPaint devices…</string>
+    <string name="select_device">Select an IndexPaint device</string>
+    <string name="none_paired">No paired devices</string>
+    <string name="none_found">No IndexPaint devices found</string>
+    <string name="none_found_paired">No new devices found. Select the paired device above.</string>
+    <string name="connection_help">Choose the other phone on one screen. The other screen returns automatically when connected.</string>
+    <string name="title_paired_devices">Paired devices</string>
+    <string name="title_other_devices">Nearby IndexPaint devices</string>
+    <string name="button_scan">Scan for IndexPaint devices</string>
+    <string name="unnamed_indexpaint_device">Unnamed IndexPaint device</string>
+    <!-- Options Menu -->
+    <string name="connect">Connect a device</string>
+    <string name="discoverable">Make discoverable</string>
+</resources>
