@@ -105,7 +105,7 @@ expect {
   eof { exit 1 }
 }
 expect {
-  -re {Re-enter new password:} { send -- "$env(NEW_STORE_PASSWORD)\r" }
+  -re {Re-enter new keystore password:} { send -- "$env(NEW_STORE_PASSWORD)\r" }
   timeout { exit 1 }
   eof { exit 1 }
 }
@@ -131,17 +131,17 @@ expect {
   eof { exit 1 }
 }
 expect {
-  -re {Enter key password.*:} { send -- "$env(OLD_KEY_PASSWORD)\r" }
+  -re {Enter key password.*} { send -- "$env(OLD_KEY_PASSWORD)\r" }
   timeout { exit 1 }
   eof { exit 1 }
 }
 expect {
-  -re {New key password.*:} { send -- "$env(NEW_KEY_PASSWORD)\r" }
+  -re {New key password.*} { send -- "$env(NEW_KEY_PASSWORD)\r" }
   timeout { exit 1 }
   eof { exit 1 }
 }
 expect {
-  -re {Re-enter new key password.*:} { send -- "$env(NEW_KEY_PASSWORD)\r" }
+  -re {Re-enter new key password.*} { send -- "$env(NEW_KEY_PASSWORD)\r" }
   timeout { exit 1 }
   eof { exit 1 }
 }
@@ -188,7 +188,7 @@ expect {
   eof { exit 1 }
 }
 expect {
-  -re {Enter key password.*:} { send -- "$env(KEY_PASSWORD)\r" }
+  -re {Enter key password.*} { send -- "$env(KEY_PASSWORD)\r" }
   timeout { exit 1 }
   eof { exit 1 }
 }
