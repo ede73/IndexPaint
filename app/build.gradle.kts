@@ -20,8 +20,13 @@ val releaseTaskNames = setOf(
     "bundleRelease", "publishInternal", "publishReleaseBundle"
 )
 val publishingTaskNames = setOf("publishInternal", "publishReleaseBundle")
+val versionedReleaseTaskNames = setOf("generateSignedBundle", "bundleRelease", "publishInternal", "publishReleaseBundle")
 val releaseRequested = requestedTaskNames.any(releaseTaskNames::contains)
 val publishingRequested = requestedTaskNames.any(publishingTaskNames::contains)
+val versionResolutionRequested = requestedTaskNames.any(versionedReleaseTaskNames::contains) &&
+    System.getenv("INDEXPAINT_EXISTING_AAB").isNullOrBlank()
+val publisherCredentialRequired = publishingRequested || versionResolutionRequested
+val existingReleaseAab = System.getenv("INDEXPAINT_EXISTING_AAB")?.takeIf(String::isNotBlank)?.let(::File)
 val defaultKeystore = rootProject.file("signing/IndexPaint-release.keystore")
     .takeIf { it.isFile }
     ?: rootProject.file("../IndexPaint/signing/IndexPaint-release.keystore")
@@ -83,17 +88,24 @@ play {
     // Keep programmatic publishing pinned to the private internal test track.
     track.set("internal")
     defaultToAppBundles.set(true)
-    // Only consult Play during publishing. Signed AAB builds do not require Play API credentials.
-    resolutionStrategy.set(if (publishingRequested) ResolutionStrategy.AUTO else ResolutionStrategy.IGNORE)
-    if (publishingRequested) {
+    // Query Play for the next code when building a new signed bundle. Reusing an existing
+    // AAB keeps the version code embedded in that exact artifact.
+    resolutionStrategy.set(
+        if (versionResolutionRequested) ResolutionStrategy.AUTO
+        else ResolutionStrategy.IGNORE
+    )
+    if (publisherCredentialRequired) {
         serviceAccountCredentials.set(publisherCredentialFile.get().asFile)
+    }
+    if (publishingRequested && existingReleaseAab != null) {
+        artifactDir.set(existingReleaseAab.parentFile)
     }
 }
 
 val prepareLocalPlayPublisherCredential = tasks.register("prepareLocalPlayPublisherCredential") {
     group = "publishing"
     description = "Validates the Play publishing credential and writes a short-lived private build file."
-    onlyIf { publishingRequested }
+    onlyIf { publisherCredentialRequired }
     doLast {
         val json = System.getenv("ANDROID_PUBLISHER_CREDENTIALS")?.takeIf(String::isNotBlank)
             ?: error("GitHub Actions secret ANDROID_PUBLISHER_CREDENTIALS is missing.")
@@ -119,11 +131,15 @@ val prepareLocalPlayPublisherCredential = tasks.register("prepareLocalPlayPublis
 val removeLocalPlayPublisherCredential = tasks.register("removeLocalPlayPublisherCredential") {
     group = "publishing"
     description = "Removes the temporary Play publishing credential from the build directory."
-    onlyIf { publishingRequested }
+    onlyIf { publisherCredentialRequired }
     doLast { publisherCredentialFile.get().asFile.delete() }
 }
 
 tasks.configureEach {
+    if (name == "bundleRelease" && versionResolutionRequested) {
+        dependsOn(prepareLocalPlayPublisherCredential)
+        finalizedBy(removeLocalPlayPublisherCredential)
+    }
     if (name == "publishReleaseBundle") {
         dependsOn(prepareLocalPlayPublisherCredential)
         finalizedBy(removeLocalPlayPublisherCredential)
@@ -163,11 +179,12 @@ tasks.configureEach {
 
 tasks.register("verifyReleaseBundleSignature") {
     group = "verification"
-    description = "Verifies that the generated AAB is signed by the configured keystore alias."
-    dependsOn("bundleRelease")
+    description = "Verifies that the release AAB is signed by the configured keystore alias."
+    if (existingReleaseAab == null) dependsOn("bundleRelease")
     doLast {
-        val bundle = layout.buildDirectory.file("outputs/bundle/release/app-release.aab").get().asFile
-        check(bundle.isFile) { "Release AAB was not generated: ${bundle.absolutePath}" }
+        val bundle = existingReleaseAab
+            ?: layout.buildDirectory.file("outputs/bundle/release/app-release.aab").get().asFile
+        check(bundle.isFile) { "Release AAB was not found: ${bundle.absolutePath}" }
 
         val storeFile = rootProject.file(configuredKeystorePath)
         val keyStore = KeyStore.getInstance(System.getenv("INDEXPAINT_KEYSTORE_TYPE") ?: "JKS")
