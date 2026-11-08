@@ -22,3 +22,12 @@ tasks.register("publishInternal") {
     dependsOn(":app:publishReleaseBundle")
     finalizedBy(":app:removeLocalPlayPublisherCredential")
 }
+
+tasks.configureEach {
+    if (name.startsWith("commitEditFor")) {
+        val commitTask = this
+        project(":app").tasks.named("removeLocalPlayPublisherCredential") {
+            mustRunAfter(commitTask)
+        }
+    }
+}
