@@ -1,6 +1,8 @@
 name: Android Mac mini build
 
 on:
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       publish_internal:
@@ -18,7 +20,7 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ (github.event_name == 'pull_request' && github.event.pull_request.user.login == 'ede73') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') }}
     runs-on: [self-hosted, macOS]
     timeout-minutes: 45
     steps:
@@ -40,7 +42,7 @@ jobs:
           echo "INDEXPAINT_KEYSTORE_PATH=$keystore_path" >> "$GITHUB_ENV"
 
       - name: Build signed AAB
-        if: ${{ !inputs.publish_internal }}
+        if: ${{ github.event_name == 'pull_request' || !inputs.publish_internal }}
         shell: bash
         env:
           INDEXPAINT_KEYSTORE_PASSWORD: ${{ secrets.INDEXPAINT_KEYSTORE_PASSWORD }}
@@ -49,10 +51,12 @@ jobs:
           INDEXPAINT_KEYSTORE_TYPE: ${{ vars.INDEXPAINT_KEYSTORE_TYPE || 'JKS' }}
         run: |
           set -euo pipefail
+          export ANDROID_HOME="$HOME/Library/Android/sdk"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
           ./gradlew --no-daemon generateSignedBundle
 
       - name: Publish to Internal testing
-        if: ${{ inputs.publish_internal }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_internal }}
         shell: bash
         env:
           INDEXPAINT_KEYSTORE_PASSWORD: ${{ secrets.INDEXPAINT_KEYSTORE_PASSWORD }}
@@ -62,6 +66,8 @@ jobs:
           ANDROID_PUBLISHER_CREDENTIALS: ${{ secrets.ANDROID_PUBLISHER_CREDENTIALS }}
         run: |
           set -euo pipefail
+          export ANDROID_HOME="$HOME/Library/Android/sdk"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
           ./gradlew --no-daemon publishInternal
 
       - name: Upload signed bundle for phone download

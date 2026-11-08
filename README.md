@@ -42,7 +42,7 @@ For emulator-to-emulator play, start two Android emulators, pair them in Android
 
 ### Signed release builds and Internal testing
 
-Signed releases are built by the manually triggered Mac mini GitHub Actions workflow described below. The runner gets the upload keystore and its GitHub-specific passwords from repository Actions secrets for that job, creates a signed AAB, then removes its temporary signing files. Do not commit a keystore or signing passwords.
+Signed releases are built by the Mac mini GitHub Actions workflow described below. On this trusted repository's pull request from `ede73`, it runs the signed AAB build only, before merge. After merge, it can also be manually triggered on `main`; publishing remains opt-in. The runner gets the upload keystore and its GitHub-specific passwords from repository Actions secrets for that job, creates a signed AAB, then removes its temporary signing files. Do not commit a keystore or signing passwords.
 
 The AAB is checked against the configured signing certificate and uploaded as a seven-day workflow artifact. A normal build does not publish to Google Play. Publishing is a separate action enabled only by the workflow's `publish_internal` input.
 
@@ -63,7 +63,7 @@ The service-account JSON is the only additional Play publishing secret. The work
 
 #### Mac mini build through GitHub Actions
 
-The manually triggered [`Android Mac mini build`](.github/workflows/android-mac-mini.yml) workflow runs on a self-hosted Mac runner. GitHub supplies the repository's signing secrets to the job; the runner decodes the upload keystore into a temporary file, signs the AAB locally, uploads the AAB as a seven-day workflow artifact, then removes the keystore and checked-out workspace. The runner uses the job-provided signing secrets and does not depend on a macOS credential store. It only handles manually dispatched jobs; publishing requires explicitly enabling the `publish_internal` input.
+The [`Android Mac mini build`](.github/workflows/android-mac-mini.yml) workflow runs on a self-hosted Mac runner. Pull requests by `ede73` to `main` run a build-only signed AAB verification before merge. Manual dispatch on `main` can build, or publish to Internal testing if `publish_internal` is explicitly enabled. GitHub supplies the repository's signing secrets to the job; the runner decodes the upload keystore into a temporary file, signs the AAB locally, uploads the AAB as a seven-day workflow artifact, then removes the keystore and checked-out workspace. The runner uses the job-provided signing secrets and does not depend on a macOS credential store.
 
 The helper writes these three **repository** Actions secrets for signing IndexPaint:
 
