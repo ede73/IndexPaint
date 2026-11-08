@@ -71,7 +71,7 @@ jobs:
           ./gradlew --no-daemon publishInternal
 
       - name: Upload signed bundle for phone download
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: indexpaint-release-aab
           path: app/build/outputs/bundle/release/app-release.aab
