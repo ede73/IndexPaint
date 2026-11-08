@@ -78,13 +78,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Remove temporary signing files and workspace
+      - name: Remove temporary signing file
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           rm -f "$RUNNER_TEMP/indexpaint-upload.jks"
-          case "$GITHUB_WORKSPACE" in
-            "$RUNNER_WORKSPACE"/*) rm -rf -- "$GITHUB_WORKSPACE" ;;
-            *) echo "Refusing to remove workspace outside runner work directory." >&2; exit 1 ;;
-          esac

@@ -83,9 +83,11 @@ play {
     // Keep programmatic publishing pinned to the private internal test track.
     track.set("internal")
     defaultToAppBundles.set(true)
-    // Ask Play for existing codes and automatically resolve a fresh code on publish.
-    resolutionStrategy.set(ResolutionStrategy.AUTO)
-    serviceAccountCredentials.set(publisherCredentialFile.get().asFile)
+    // Only consult Play during publishing. Signed AAB builds do not require Play API credentials.
+    resolutionStrategy.set(if (publishingRequested) ResolutionStrategy.AUTO else ResolutionStrategy.IGNORE)
+    if (publishingRequested) {
+        serviceAccountCredentials.set(publisherCredentialFile.get().asFile)
+    }
 }
 
 val prepareLocalPlayPublisherCredential = tasks.register("prepareLocalPlayPublisherCredential") {

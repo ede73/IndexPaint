@@ -63,7 +63,7 @@ The service-account JSON is the only additional Play publishing secret. The work
 
 #### Mac mini build through GitHub Actions
 
-The [`Android Mac mini build`](.github/workflows/android-mac-mini.yml) workflow runs on a self-hosted Mac runner. Pull requests by `ede73` to `main` run a build-only signed AAB verification before merge. Manual dispatch on `main` can build, or publish to Internal testing if `publish_internal` is explicitly enabled. GitHub supplies the repository's signing secrets to the job; the runner decodes the upload keystore into a temporary file, signs the AAB locally, uploads the AAB as a seven-day workflow artifact, then removes the keystore and checked-out workspace. The runner uses the job-provided signing secrets and does not depend on a macOS credential store.
+The [`Android Mac mini build`](.github/workflows/android-mac-mini.yml) workflow runs on a self-hosted Mac runner. Pull requests by `ede73` to `main` run a build-only signed AAB verification before merge. Manual dispatch on `main` can build, or publish to Internal testing if `publish_internal` is explicitly enabled. GitHub supplies the repository's signing secrets to the job; the runner decodes the upload keystore into a temporary file, signs the AAB locally, uploads the AAB as a seven-day workflow artifact, then removes the temporary keystore. The next checkout cleans the reused workspace. The runner uses the job-provided signing secrets and does not depend on a macOS credential store.
 
 The helper writes these three **repository** Actions secrets for signing IndexPaint:
 
