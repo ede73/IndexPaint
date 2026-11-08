@@ -9,6 +9,7 @@
 /.idea/assetWizardSettings.xml
 .DS_Store
 /build
+/app/build/
 /captures
 .externalNativeBuild
 .cxx
@@ -17,6 +18,7 @@ app/release/
 
 # Local signing keys
 /signing/
+/signing.properties
 
 # Android Studio machine-local configuration
 /.idea/

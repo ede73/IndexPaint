@@ -1,0 +1,78 @@
+name: Android Mac mini build
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_internal:
+        description: Publish the signed bundle to Google Play Internal testing
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-release-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Materialize upload keystore
+        shell: bash
+        env:
+          INDEXPAINT_UPLOAD_KEYSTORE_BASE64: ${{ secrets.INDEXPAINT_UPLOAD_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          : "${INDEXPAINT_UPLOAD_KEYSTORE_BASE64:?Missing INDEXPAINT_UPLOAD_KEYSTORE_BASE64 repository secret}"
+          keystore_path="$RUNNER_TEMP/indexpaint-upload.jks"
+          printf '%s' "$INDEXPAINT_UPLOAD_KEYSTORE_BASE64" | base64 -D > "$keystore_path"
+          chmod 600 "$keystore_path"
+          echo "INDEXPAINT_KEYSTORE_PATH=$keystore_path" >> "$GITHUB_ENV"
+
+      - name: Build signed AAB
+        if: ${{ !inputs.publish_internal }}
+        shell: bash
+        env:
+          INDEXPAINT_KEYSTORE_PASSWORD: ${{ secrets.INDEXPAINT_KEYSTORE_PASSWORD }}
+          INDEXPAINT_KEY_PASSWORD: ${{ secrets.INDEXPAINT_KEY_PASSWORD }}
+          INDEXPAINT_KEY_ALIAS: ${{ vars.INDEXPAINT_KEY_ALIAS || 'vh' }}
+        run: ./gradlew --no-daemon generateSignedBundle
+
+      - name: Publish to Internal testing
+        if: ${{ inputs.publish_internal }}
+        shell: bash
+        env:
+          INDEXPAINT_KEYSTORE_PASSWORD: ${{ secrets.INDEXPAINT_KEYSTORE_PASSWORD }}
+          INDEXPAINT_KEY_PASSWORD: ${{ secrets.INDEXPAINT_KEY_PASSWORD }}
+          INDEXPAINT_KEY_ALIAS: ${{ vars.INDEXPAINT_KEY_ALIAS || 'vh' }}
+          ANDROID_PUBLISHER_CREDENTIALS: ${{ secrets.ANDROID_PUBLISHER_CREDENTIALS }}
+        run: ./gradlew --no-daemon publishInternal
+
+      - name: Upload signed bundle for phone download
+        uses: actions/upload-artifact@v4
+        with:
+          name: indexpaint-release-aab
+          path: app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove temporary signing files and workspace
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/indexpaint-upload.jks"
+          case "$GITHUB_WORKSPACE" in
+            "$RUNNER_WORKSPACE"/*) rm -rf -- "$GITHUB_WORKSPACE" ;;
+            *) echo "Refusing to remove workspace outside runner work directory." >&2; exit 1 ;;
+          esac
