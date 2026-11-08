@@ -1,0 +1,221 @@
+name: Android Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: What to do with the Android App Bundle
+        required: true
+        type: choice
+        options:
+          - verify_signing_inputs
+          - build_signed
+          - build_and_publish_internal
+          - publish_existing_internal
+      source_ref:
+        description: Branch, tag, or commit to build (ignored when publishing an existing artifact)
+        required: true
+        default: main
+        type: string
+      artifact_run_id:
+        description: Successful Android Release run containing the AAB (required for publish_existing_internal)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Keep this workflow definition on main. source_ref selects only the application code.
+    if: github.actor == 'ede73' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, macOS, indexpaint-release]
+    timeout-minutes: 90
+    env:
+      ANDROID_HOME: /Users/ede/Library/Android/sdk
+      ANDROID_SDK_ROOT: /Users/ede/Library/Android/sdk
+    steps:
+      - name: Check required inputs and secrets
+        env:
+          OPERATION: ${{ inputs.operation }}
+          ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
+          KEYSTORE_BASE64: ${{ secrets.INDEXPAINT_UPLOAD_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.INDEXPAINT_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.INDEXPAINT_KEY_PASSWORD }}
+          PUBLISHER_CREDENTIALS: ${{ secrets.ANDROID_PUBLISHER_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_BASE64" || { echo "Missing INDEXPAINT_UPLOAD_KEYSTORE_BASE64" >&2; exit 1; }
+          test -n "$KEYSTORE_PASSWORD" || { echo "Missing INDEXPAINT_KEYSTORE_PASSWORD" >&2; exit 1; }
+          test -n "$KEY_PASSWORD" || { echo "Missing INDEXPAINT_KEY_PASSWORD" >&2; exit 1; }
+          case "$OPERATION" in
+            verify_signing_inputs)
+              ;;
+            build_signed|build_and_publish_internal)
+              test -n "$PUBLISHER_CREDENTIALS" || { echo "Missing ANDROID_PUBLISHER_CREDENTIALS; Gradle needs it to resolve the next Play version code." >&2; exit 1; }
+              ;;
+            publish_existing_internal)
+              test -n "$PUBLISHER_CREDENTIALS" || { echo "Missing ANDROID_PUBLISHER_CREDENTIALS" >&2; exit 1; }
+              test -n "$ARTIFACT_RUN_ID" || { echo "artifact_run_id is required for publish_existing_internal" >&2; exit 1; }
+              ;;
+            *) echo "Unsupported operation" >&2; exit 1 ;;
+          esac
+
+      - name: Check out selected application source
+        if: inputs.operation != 'publish_existing_internal'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_ref }}
+          path: source
+          persist-credentials: false
+
+      - name: Check out trusted main build scripts for publishing an existing AAB
+        if: inputs.operation == 'publish_existing_internal'
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          path: source
+          persist-credentials: false
+
+      - name: Record selected source commit
+        if: inputs.operation != 'publish_existing_internal'
+        id: source
+        working-directory: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Materialize signing keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.INDEXPAINT_UPLOAD_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          path = Path(os.environ["RUNNER_TEMP"]) / "indexpaint-upload.jks"
+          path.write_bytes(base64.b64decode(os.environ["KEYSTORE_BASE64"], validate=True))
+          path.chmod(0o600)
+          PY
+
+      - name: Verify signing inputs and certificate
+        if: inputs.operation == 'verify_signing_inputs'
+        working-directory: source
+        env:
+          INDEXPAINT_KEYSTORE_PATH: ${{ runner.temp }}/indexpaint-upload.jks
+          INDEXPAINT_KEYSTORE_TYPE: ${{ vars.INDEXPAINT_KEYSTORE_TYPE }}
+          INDEXPAINT_KEY_ALIAS: ${{ vars.INDEXPAINT_KEY_ALIAS }}
+          INDEXPAINT_KEYSTORE_PASSWORD: ${{ secrets.INDEXPAINT_KEYSTORE_PASSWORD }}
+          INDEXPAINT_KEY_PASSWORD: ${{ secrets.INDEXPAINT_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon verifyReleaseSigning
+
+      - name: Build and verify signed AAB
+        if: inputs.operation == 'build_signed' || inputs.operation == 'build_and_publish_internal'
+        working-directory: source
+        env:
+          INDEXPAINT_KEYSTORE_PATH: ${{ runner.temp }}/indexpaint-upload.jks
+          INDEXPAINT_KEYSTORE_TYPE: ${{ vars.INDEXPAINT_KEYSTORE_TYPE }}
+          INDEXPAINT_KEY_ALIAS: ${{ vars.INDEXPAINT_KEY_ALIAS }}
+          INDEXPAINT_KEYSTORE_PASSWORD: ${{ secrets.INDEXPAINT_KEYSTORE_PASSWORD }}
+          INDEXPAINT_KEY_PASSWORD: ${{ secrets.INDEXPAINT_KEY_PASSWORD }}
+          ANDROID_PUBLISHER_CREDENTIALS: ${{ secrets.ANDROID_PUBLISHER_CREDENTIALS }}
+        run: ./gradlew --no-daemon generateSignedBundle
+
+      - name: Publish the just-built AAB to Internal testing
+        if: inputs.operation == 'build_and_publish_internal'
+        working-directory: source
+        env:
+          INDEXPAINT_EXISTING_AAB: ${{ github.workspace }}/source/app/build/outputs/bundle/release/app-release.aab
+          INDEXPAINT_KEYSTORE_PATH: ${{ runner.temp }}/indexpaint-upload.jks
+          INDEXPAINT_KEYSTORE_TYPE: ${{ vars.INDEXPAINT_KEYSTORE_TYPE }}
+          INDEXPAINT_KEY_ALIAS: ${{ vars.INDEXPAINT_KEY_ALIAS }}
+          INDEXPAINT_KEYSTORE_PASSWORD: ${{ secrets.INDEXPAINT_KEYSTORE_PASSWORD }}
+          INDEXPAINT_KEY_PASSWORD: ${{ secrets.INDEXPAINT_KEY_PASSWORD }}
+          ANDROID_PUBLISHER_CREDENTIALS: ${{ secrets.ANDROID_PUBLISHER_CREDENTIALS }}
+        run: ./gradlew --no-daemon publishInternal
+
+      - name: Download previously built AAB
+        if: inputs.operation == 'publish_existing_internal'
+        uses: actions/download-artifact@v8
+        with:
+          name: indexpaint-release-aab
+          path: ${{ runner.temp }}/indexpaint-release-aab
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.artifact_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Confirm artifact run ID and AAB checksum
+        if: inputs.operation == 'publish_existing_internal'
+        env:
+          ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/indexpaint-release-aab"
+          test -s app-release.aab
+          if [ -f provenance.txt ]; then
+            grep -Fx "build_run_id=${ARTIFACT_RUN_ID}" provenance.txt
+          else
+            echo "Legacy AAB artifact from run ${ARTIFACT_RUN_ID}; recording its checksum now."
+          fi
+          if [ -f app-release.aab.sha256 ]; then
+            shasum -a 256 -c app-release.aab.sha256
+          else
+            shasum -a 256 app-release.aab
+          fi
+
+      - name: Publish the selected existing AAB to Internal testing
+        if: inputs.operation == 'publish_existing_internal'
+        working-directory: ${{ runner.temp }}/indexpaint-release-aab
+        env:
+          INDEXPAINT_EXISTING_AAB: ${{ runner.temp }}/indexpaint-release-aab/app-release.aab
+          INDEXPAINT_KEYSTORE_PATH: ${{ runner.temp }}/indexpaint-upload.jks
+          INDEXPAINT_KEYSTORE_TYPE: ${{ vars.INDEXPAINT_KEYSTORE_TYPE }}
+          INDEXPAINT_KEY_ALIAS: ${{ vars.INDEXPAINT_KEY_ALIAS }}
+          INDEXPAINT_KEYSTORE_PASSWORD: ${{ secrets.INDEXPAINT_KEYSTORE_PASSWORD }}
+          INDEXPAINT_KEY_PASSWORD: ${{ secrets.INDEXPAINT_KEY_PASSWORD }}
+          ANDROID_PUBLISHER_CREDENTIALS: ${{ secrets.ANDROID_PUBLISHER_CREDENTIALS }}
+        run: ./gradlew --no-daemon -p "${GITHUB_WORKSPACE}/source" publishInternal
+
+      - name: Write build provenance
+        if: inputs.operation == 'build_signed' || inputs.operation == 'build_and_publish_internal'
+        working-directory: source
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          set -euo pipefail
+          cd app/build/outputs/bundle/release
+          shasum -a 256 app-release.aab > app-release.aab.sha256
+          {
+            echo "build_run_id=${GITHUB_RUN_ID}"
+            echo "source_ref=${SOURCE_REF}"
+            echo "source_sha=${SOURCE_SHA}"
+            echo "operation=${OPERATION}"
+            cat app-release.aab.sha256
+          } > provenance.txt
+
+      - name: Upload signed AAB and provenance
+        if: inputs.operation == 'build_signed' || inputs.operation == 'build_and_publish_internal'
+        uses: actions/upload-artifact@v7
+        with:
+          name: indexpaint-release-aab
+          path: |
+            source/app/build/outputs/bundle/release/app-release.aab
+            source/app/build/outputs/bundle/release/app-release.aab.sha256
+            source/app/build/outputs/bundle/release/provenance.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Remove temporary signing material
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/indexpaint-upload.jks"
