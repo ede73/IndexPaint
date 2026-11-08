@@ -18,7 +18,6 @@
     <string name="mnuMiscSave">Save...</string>
     <string name="mnuMiscClear">Clear image</string>
     <string name="mnuMiscShareAs">Share image as</string>
-    <string name="mnuFoldFinish">Reveal whole drawing…</string>
     <string name="mnuHideFoldHints">Hide handoff hints</string>
     <string name="mnuShowFoldHints">Show handoff hints</string>
     <string name="txtChooseImage">Choose image</string>

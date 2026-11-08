@@ -258,13 +258,19 @@ class PaintApp : Application() {
                 return
             }
             DrawingMessage.FoldFinishRequest -> {
-                (currentActivity as? IndexPaint)?.onFoldFinishRequested()
+                // The drawer ending the session is the one who decides. Chunks for
+                // the final layer arrive before this command on the ordered stream.
+                val revealed = revealFoldLayers()
+                sendMessage(DrawingMessage.FoldFinishResponse(revealed))
                 return
             }
             is DrawingMessage.FoldFinishResponse -> {
                 if (!foldFinishPending) return
                 foldFinishPending = false
-                if (command.accepted) revealFoldLayers() else (currentActivity as? IndexPaint)?.onFoldSessionChanged()
+                if (!command.accepted || !revealFoldLayers()) {
+                    toast("The whole drawing could not be revealed. Keep the session open and try again.")
+                    (currentActivity as? IndexPaint)?.onFoldSessionChanged()
+                }
                 return
             }
             DrawingMessage.FoldCancel -> {
@@ -412,12 +418,12 @@ class PaintApp : Application() {
 
     fun foldProgressPercent(): Int {
         val remaining = (1f - foldPreviousBoundary).coerceAtLeast(0.0001f)
-        return (((foldBoundary - foldPreviousBoundary) / remaining) * 100f).toInt().coerceIn(5, 95)
+        return (((foldBoundary - foldPreviousBoundary) / remaining) * 100f).toInt().coerceIn(5, 100)
     }
 
     fun setFoldProgressPercent(percent: Int) {
         if (!isLocalFoldTurn() || foldFinishPending) return
-        val fraction = percent.coerceIn(5, 95) / 100f
+        val fraction = percent.coerceIn(5, 100) / 100f
         foldBoundary = foldPreviousBoundary + (1f - foldPreviousBoundary) * fraction
         publishFoldPreview()
         view?.invalidate()
@@ -428,6 +434,10 @@ class PaintApp : Application() {
     fun endTurnOrYield() {
         if (!isLocalFoldTurn() || foldFinishPending || foldYieldPending || !isConnectedToPeer()) return
         if (!foldTurnEnded) {
+            if (foldBoundary >= 1f) {
+                requestFoldFinish()
+                return
+            }
             foldLayers[foldIndex]?.takeIf { !it.isRecycled }?.recycle()
             foldLayers[foldIndex] = checkNotNull(view).snapshotDrawingLayer()
             foldTurnEnded = true
@@ -463,19 +473,26 @@ class PaintApp : Application() {
     fun isHandoffMetadataPhase(): Boolean = foldSessionActive && foldTurnEnded && isLocalFoldTurn()
 
     fun requestFoldFinish() {
-        if (!isLocalFoldTurn() || foldFinishPending || foldTurnEnded || !isConnectedToPeer()) return
+        if (!isLocalFoldTurn() || foldFinishPending || foldYieldPending || !isConnectedToPeer()) return
         val layer = checkNotNull(view).snapshotDrawingLayer()
         foldLayers[foldIndex]?.takeIf { !it.isRecycled }?.recycle()
         foldLayers[foldIndex] = layer
-        if (!sendFoldLayer(foldIndex, layer)) { toast("Could not send drawing"); return }
         foldFinishPending = true
-        if (!sendMessage(DrawingMessage.FoldFinishRequest)) foldFinishPending = false
+        (currentActivity as? IndexPaint)?.onFoldSessionChanged()
+        if (!sendFoldLayer(foldIndex, layer)) {
+            foldFinishPending = false
+            toast("Could not send drawing")
+            (currentActivity as? IndexPaint)?.onFoldSessionChanged()
+            return
+        }
+        if (!sendMessage(DrawingMessage.FoldFinishRequest)) {
+            foldFinishPending = false
+            toast("Could not send the end-session request")
+        } else {
+            toast("Ending session and revealing the whole drawing…")
+        }
         (currentActivity as? IndexPaint)?.onFoldSessionChanged()
         updateFoldAccessibility()
-    }
-
-    fun respondToFoldFinish(accepted: Boolean) {
-        if (sendMessage(DrawingMessage.FoldFinishResponse(accepted)) && accepted) revealFoldLayers()
     }
 
     private fun retryPendingYield() {
@@ -723,10 +740,10 @@ class PaintApp : Application() {
         updateFoldAccessibility()
     }
 
-    private fun revealFoldLayers() {
+    private fun revealFoldLayers(): Boolean {
         if ((0..foldIndex).any { it !in foldLayers && it !in foldLayerFiles }) {
             Log.w(TAG, "Reveal is waiting for missing hidden layers")
-            return
+            return false
         }
         val finalBitmap = Bitmap.createBitmap(localBitmap.width, localBitmap.height, Bitmap.Config.ARGB_8888)
         Canvas(finalBitmap).apply {
@@ -752,6 +769,7 @@ class PaintApp : Application() {
         (currentActivity as? IndexPaint)?.onFoldSessionChanged()
         updateFoldAccessibility()
         toast("All folds revealed")
+        return true
     }
 
     private fun updateFoldAccessibility() {
@@ -763,8 +781,9 @@ class PaintApp : Application() {
         val metadataVisible = if (view?.hasLastHandoffMetadata() == true) " Handoff metadata is visible." else ""
         canvasView.contentDescription = when {
             !isLocalFoldTurn() -> "Index Paint canvas. Waiting for ${peerDisplayName()}. Turn ${foldIndex + 1}.$metadataVisible"
-            foldTurnEnded -> "Index Paint canvas. Add handoff notes with your finger or Text. They are separate from the final picture. Press Yield to send them. ${view?.pendingHandoffMarkCount() ?: 0} notes added.$metadataVisible"
-            else -> "Index Paint canvas. Your turn to draw. Turn ${foldIndex + 1}. Press End turn to add handoff metadata.$metadataVisible"
+            foldTurnEnded -> "Index Paint canvas. Add handoff notes with your finger or Text, then Yield to pass the turn, or End session to reveal the whole drawing. ${view?.pendingHandoffMarkCount() ?: 0} notes added.$metadataVisible"
+            foldBoundary >= 1f -> "Index Paint canvas. Your turn to draw. Turn ${foldIndex + 1}. End session to reveal the whole drawing.$metadataVisible"
+            else -> "Index Paint canvas. Your turn to draw. Turn ${foldIndex + 1}. Press End turn to add handoff metadata, or End session to reveal the whole drawing.$metadataVisible"
         }
     }
 

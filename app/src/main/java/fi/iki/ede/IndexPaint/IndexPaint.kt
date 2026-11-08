@@ -50,10 +50,10 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
     private var foldProgressLabel: TextView? = null
     private var foldProgressSlider: SeekBar? = null
     private var yieldButton: Button? = null
+    private var endSessionButton: Button? = null
     private var drawingToolbar: LinearLayout? = null
     private var connectionStatusItem: MenuItem? = null
     private var sessionModeDialog: AlertDialog? = null
-    private var foldFinishDialog: AlertDialog? = null
     private var sessionModeStatus: TextView? = null
     private var foldGameButton: Button? = null
     private var freeDrawButton: Button? = null
@@ -115,10 +115,6 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
     }
 
     override fun onPrepareOptionsMenu(menu: Menu): Boolean {
-        menu.findItem(R.id.mnuFoldFinish)?.apply {
-            isVisible = app.foldSessionActive && app.isLocalFoldTurn() && !app.foldTurnEnded && !app.foldFinishPending
-            isEnabled = isVisible
-        }
         menu.findItem(R.id.mnuToggleFoldHints)?.apply {
             val show = app.view?.handoffHintsVisible != false
             isVisible = app.foldSessionActive
@@ -139,7 +135,6 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
             R.id.mnuMiscOpen -> startActivityForResult(Intent(Intent.ACTION_GET_CONTENT).setType("image/*"), SELECT_PICTURE)
             R.id.mnuMiscSave -> app.saveBitmap()
             R.id.mnuMiscShareAs -> app.shareBitmap()
-            R.id.mnuFoldFinish -> confirmFoldFinish()
             R.id.mnuToggleFoldHints -> {
                 app.view?.toggleHandoffHints()
                 invalidateOptionsMenu()
@@ -241,7 +236,7 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
             progress = 50
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    foldProgressLabel?.text = "Fold ${progress.coerceIn(5, 95)}%"
+                    foldProgressLabel?.text = "Fold ${progress.coerceIn(5, 100)}%"
                     if (fromUser) app.setFoldProgressPercent(progress)
                 }
                 override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
@@ -251,6 +246,8 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
         foldControls.addView(foldProgressSlider, LinearLayout.LayoutParams(0, dp(40), 1f))
         yieldButton = toolButton("End turn", "End your drawing turn and add handoff metadata") { app.endTurnOrYield() }
         foldControls.addView(yieldButton, LinearLayout.LayoutParams(dp(72), dp(40)))
+        endSessionButton = toolButton("End session", "End the session and reveal the whole drawing") { confirmFoldFinish() }
+        foldControls.addView(endSessionButton, LinearLayout.LayoutParams(dp(96), dp(40)))
         toolbar.addView(foldControls, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)))
         foldRow = foldControls
 
@@ -282,10 +279,10 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
 
     private fun confirmFoldFinish() {
         AlertDialog.Builder(this)
-            .setTitle("Reveal the whole drawing?")
-            .setMessage("This asks your partner to reveal every fold and end the Fold game.")
+            .setTitle("End this session?")
+            .setMessage("The whole drawing will be revealed on both devices. There will be no more turns.")
             .setNegativeButton("Keep drawing", null)
-            .setPositiveButton("Ask partner") { _, _ -> app.requestFoldFinish() }
+            .setPositiveButton("End session") { _, _ -> app.requestFoldFinish() }
             .show()
     }
 
@@ -357,7 +354,7 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
             }
         }
         app.view?.setBottomControlsHeight(dp(if (active) 136 else 96))
-        val localTurn = active && app.isLocalFoldTurn() && !app.foldFinishPending
+        val localTurn = active && app.isLocalFoldTurn() && !app.foldFinishPending && !app.foldYieldPending
         listOf(undoButton, redoButton, colorButton, brushButton, embossButton, eraserButton).forEach { it?.isEnabled = !active || localTurn }
         widthSlider?.isEnabled = !active || localTurn
         foldProgressSlider?.apply {
@@ -372,13 +369,18 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
         yieldButton?.apply {
             val hasMetadata = app.view?.hasPendingHandoffMarks() == true
             isEnabled = localTurn && (!app.foldTurnEnded || hasMetadata)
-            text = if (!localTurn) "Wait" else if (app.foldTurnEnded) "Yield" else "End turn"
+            text = if (app.foldYieldPending) "Sending…" else if (!localTurn) "Wait" else if (app.foldTurnEnded) "Yield" else if (app.foldProgressPercent() == 100) "End session" else "End turn"
             contentDescription = when {
+                app.foldYieldPending -> "Sending the drawing and handoff notes; waiting for your partner to confirm receipt"
                 !localTurn -> "Waiting for ${app.peerDisplayName()}"
                 !app.foldTurnEnded -> "End your drawing turn to add handoff notes"
                 !hasMetadata -> "Draw a note with your finger or add Text before yielding"
                 else -> "Yield and send ${app.view?.pendingHandoffMarkCount() ?: 0} notes; they stay out of the final picture"
             }
+        }
+        endSessionButton?.apply {
+            isEnabled = localTurn
+            contentDescription = if (app.foldFinishPending) "Ending the session" else "End the session now and reveal the whole drawing on both devices"
         }
     }
 
@@ -443,17 +445,6 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
         sessionModeDialog?.dismiss()
         sessionModeDialog = null
         app.view?.invalidate()
-    }
-
-    fun onFoldFinishRequested() {
-        if (isFinishing || foldFinishDialog?.isShowing == true) return
-        foldFinishDialog = AlertDialog.Builder(this)
-            .setTitle("Reveal the whole drawing?")
-            .setMessage("The other drawer wants to end the Fold game. Reveal every hidden fold now?")
-            .setPositiveButton("Reveal all folds") { _, _ -> app.respondToFoldFinish(true) }
-            .setNegativeButton("Keep drawing") { _, _ -> app.respondToFoldFinish(false) }
-            .setOnDismissListener { foldFinishDialog = null }
-            .show()
     }
 
     private fun toolButton(label: String, description: String, action: () -> Unit) = Button(this).apply {
