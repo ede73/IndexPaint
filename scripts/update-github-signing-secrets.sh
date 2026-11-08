@@ -57,7 +57,6 @@ secret_store_password="${prefix}_KEYSTORE_PASSWORD"
 secret_key_password="${prefix}_KEY_PASSWORD"
 variable_alias="${prefix}_KEY_ALIAS"
 variable_type="${prefix}_KEYSTORE_TYPE"
-rotation_lock="${prefix}_SIGNING_UPDATE_IN_PROGRESS"
 
 if [[ -z "$keystore_arg" ]]; then
   while :; do
@@ -257,7 +256,6 @@ Plan for $repo:
   Set GitHub Actions secret: $secret_key_password
   Set repository variable:  $variable_alias
   Set repository variable:  $variable_type
-  Pause builds during the update with: $rotation_lock
   Remove any old combined signing secret created by the earlier script
 
 The source keystore will remain unchanged. The new passwords will not be printed
@@ -270,16 +268,12 @@ if [[ "$confirmation" != "y" && "$confirmation" != "Y" ]]; then
   exit 0
 fi
 
-if ! gh variable set "$rotation_lock" --repo "$repo" --body true; then
-  echo "Could not pause the workflow; no signing secrets were changed." >&2
-  exit 1
-fi
 set_secret() {
   local name="$1"
   local value="$2"
   echo "Setting GitHub Actions secret $name..."
   if ! printf '%s' "$value" | gh secret set "$name" --repo "$repo"; then
-    echo "Partial signing-secret update: $rotation_lock remains true, so builds are paused. Rerun this script from the unchanged local JKS to replace all three secrets and finish the update." >&2
+    echo "Partial signing-secret update: $name failed after earlier writes may have succeeded. Do not build yet; rerun this script from the unchanged local JKS to replace all three secrets." >&2
     return 1
   fi
 }
@@ -287,11 +281,11 @@ if ! set_secret "$secret_keystore" "$keystore_b64"; then exit 1; fi
 if ! set_secret "$secret_store_password" "$new_store_password"; then exit 1; fi
 if ! set_secret "$secret_key_password" "$new_key_password"; then exit 1; fi
 if ! gh variable set "$variable_alias" --repo "$repo" --body "$alias"; then
-  echo "Signing secrets are set but signing alias configuration failed. Builds remain paused; rerun this script to finish." >&2
+  echo "Signing alias configuration failed after the secrets were written. Do not build yet; rerun this script from the unchanged local JKS." >&2
   exit 1
 fi
 if ! gh variable set "$variable_type" --repo "$repo" --body "$keystore_type"; then
-  echo "Signing secrets are set but keystore type configuration failed. Builds remain paused; rerun this script to finish." >&2
+  echo "Keystore type configuration failed after the secrets were written. Do not build yet; rerun this script from the unchanged local JKS." >&2
   exit 1
 fi
 
@@ -303,11 +297,7 @@ for old_secret in "${prefix}_SIGNING_BUNDLE" "${prefix}_SIGNING_SECRET"; do
 done
 
 if [[ "$(shasum -a 256 "$keystore" | awk '{print $1}')" != "$source_hash" ]]; then
-  echo "ERROR: source keystore hash changed during the update. Builds remain paused; rerun after checking the source JKS." >&2
-  exit 1
-fi
-if ! gh variable set "$rotation_lock" --repo "$repo" --body false; then
-  echo "All signing values are set, but builds remain paused. Rerun this script to clear $rotation_lock." >&2
+  echo "ERROR: source keystore hash changed during the update. Do not build; rerun after checking the source JKS." >&2
   exit 1
 fi
 echo "GitHub Actions signing secrets updated: $secret_keystore, $secret_store_password, and $secret_key_password. Original local keystore is unchanged."
