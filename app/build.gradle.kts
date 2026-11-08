@@ -45,8 +45,8 @@ android {
         applicationId = "fi.iki.ede.IndexPaint"
         minSdk = 28
         targetSdk = 36
-        versionCode = 4
-        versionName = "2.0"
+        versionCode = 6
+        versionName = "2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
