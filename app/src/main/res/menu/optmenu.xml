@@ -63,9 +63,6 @@
                 android:icon="@android:drawable/ic_menu_share"
                 android:title="@string/mnuMiscShareAs" />
             <item
-                android:id="@+id/mnuFoldFinish"
-                android:title="@string/mnuFoldFinish" />
-            <item
                 android:id="@+id/mnuToggleFoldHints"
                 android:title="@string/mnuHideFoldHints" />
         </menu>

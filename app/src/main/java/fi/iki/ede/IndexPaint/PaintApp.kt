@@ -79,12 +79,24 @@ class PaintApp : Application() {
         private set
     var foldFinishPending: Boolean = false
         private set
+    @Volatile var foldYieldPending: Boolean = false
+        private set
+    private var yieldAttemptId = 0
+    private var pendingYieldMessageId: String? = null
+    private var pendingYieldRetryCount = 0
+    private var pendingYieldBoundary: Float = 0f
+    private var pendingYieldBitmap: Bitmap? = null
+    private var lastCommittedYieldMessageId: String? = null
+    private var lastCommittedYieldIndex: Int = -1
+    private var lastCommittedYieldBoundary: Float = Float.NaN
+    private var peerProtocolVersion: Int? = null
     val foldLayers = sortedMapOf<Int, Bitmap>()
     private val foldLayerFiles = sortedMapOf<Int, File>()
     private val imageTransfers = mutableMapOf<String, ImageTransfer>()
     private val foldImageTransfers = mutableMapOf<String, ImageTransfer>()
     private val foldHandoffTransfers = mutableMapOf<String, ImageTransfer>()
     private val incomingHandoffAnnotations = mutableMapOf<Int, Bitmap>()
+    private val yieldRetryRunnable = Runnable { retryPendingYield() }
 
     private data class ImageTransfer(
         val foldIndex: Int,
@@ -96,11 +108,17 @@ class PaintApp : Application() {
     val actionBarHeightPx: Int
         get() = (currentActivity as? androidx.appcompat.app.AppCompatActivity)?.supportActionBar?.height ?: 0
 
-    private val commandHandler = object : Handler(Looper.getMainLooper()) {
+    private val commandHandler: Handler = object : Handler(Looper.getMainLooper()) {
         override fun handleMessage(message: Message) {
             when (message.what) {
                 BluetoothTransport.IPC_MESSAGE_STATE_CHANGE -> when (message.arg1) {
                     BluetoothTransport.STATE_NONE -> {
+                        foldYieldPending = false
+                        yieldAttemptId++
+                        pendingYieldMessageId = null
+                        pendingYieldRetryCount = 0
+                        pendingYieldBitmap?.takeIf { !it.isRecycled }?.recycle()
+                        pendingYieldBitmap = null
                         endFoldAfterDisconnect()
                         imageTransfers.clear()
                         foldImageTransfers.clear()
@@ -108,6 +126,7 @@ class PaintApp : Application() {
                         incomingHandoffAnnotations.values.forEach { if (!it.isRecycled) it.recycle() }
                         incomingHandoffAnnotations.clear()
                         connectedDeviceName = null
+                        peerProtocolVersion = null
                         peerParticipantId = null
                         foldHelloSent = false
                         sessionMode = null
@@ -129,6 +148,7 @@ class PaintApp : Application() {
                     if (!foldHelloSent) {
                         foldHelloSent = true
                         sendMessage(DrawingMessage.FoldHello(participantId))
+                        sendMessage(DrawingMessage.ProtocolVersion(CURRENT_PROTOCOL_VERSION))
                     }
                 }
                 BluetoothTransport.IPC_MESSAGE_TOAST -> toast(message.data.getString(BluetoothTransport.TOAST).orEmpty())
@@ -149,6 +169,11 @@ class PaintApp : Application() {
             is DrawingMessage.FoldHello -> {
                 peerParticipantId = command.participantId
                 maybeShowSessionModeChoice()
+                return
+            }
+            is DrawingMessage.ProtocolVersion -> {
+                peerProtocolVersion = command.version
+                Log.i(TAG, "Peer protocol version ${command.version}")
                 return
             }
             is DrawingMessage.SessionModeChoice -> {
@@ -182,21 +207,70 @@ class PaintApp : Application() {
                 return
             }
             is DrawingMessage.FoldYield -> {
-                if (isLocalFoldTurn() || command.foldIndex != foldIndex ||
-                    !command.boundary.isFinite() || command.boundary < foldPreviousBoundary || command.boundary > 1f ||
-                    command.foldIndex !in foldLayers && command.foldIndex !in foldLayerFiles
-                ) return
-                advanceFold(command.foldIndex, command.boundary)
+                // Commit once per transaction ID. A duplicate commit is only re-acked.
+                val duplicate = command.messageId == lastCommittedYieldMessageId &&
+                    command.foldIndex == lastCommittedYieldIndex &&
+                    kotlin.math.abs(command.boundary - lastCommittedYieldBoundary) < 0.00001f
+                if (duplicate) {
+                    if (!sendMessage(DrawingMessage.FoldYieldAck(command.messageId, command.foldIndex, true))) {
+                        Log.w(TAG, "Could not re-send acknowledgement for handoff ${command.messageId}")
+                    }
+                    return
+                }
+                val valid = command.messageId.matches(Regex("[A-Za-z0-9-]{1,64}")) &&
+                    !isLocalFoldTurn() && command.foldIndex == foldIndex &&
+                    command.boundary.isFinite() && command.boundary >= foldPreviousBoundary && command.boundary <= 1f &&
+                    command.foldIndex in foldLayers && incomingHandoffAnnotations[command.foldIndex]?.isRecycled == false
+                if (valid) {
+                    advanceFold(command.foldIndex, command.boundary)
+                    lastCommittedYieldMessageId = command.messageId
+                    lastCommittedYieldIndex = command.foldIndex
+                    lastCommittedYieldBoundary = command.boundary
+                } else {
+                    Log.w(TAG, "Rejected Yield ${command.messageId} for fold ${command.foldIndex}: current fold=$foldIndex, localTurn=${isLocalFoldTurn()}, layer=${command.foldIndex in foldLayers}, metadata=${incomingHandoffAnnotations[command.foldIndex]?.isRecycled == false}, boundary=${command.boundary}")
+                }
+                if (!sendMessage(DrawingMessage.FoldYieldAck(command.messageId, command.foldIndex, valid))) {
+                    Log.w(TAG, "Could not acknowledge handoff ${command.messageId}")
+                }
+                return
+            }
+            is DrawingMessage.FoldYieldAck -> {
+                if (!foldYieldPending || command.messageId != pendingYieldMessageId || command.foldIndex != foldIndex) return
+                if (!command.accepted) {
+                    Log.w(TAG, "Peer rejected handoff ${command.messageId}; retrying transaction")
+                    commandHandler.removeCallbacks(yieldRetryRunnable)
+                    commandHandler.post(yieldRetryRunnable)
+                    return
+                }
+                foldYieldPending = false
+                yieldAttemptId++
+                pendingYieldMessageId = null
+                pendingYieldRetryCount = 0
+                commandHandler.removeCallbacks(yieldRetryRunnable)
+                val handoff = pendingYieldBitmap
+                pendingYieldBitmap = null
+                if (handoff != null) {
+                    advanceFold(command.foldIndex, pendingYieldBoundary, handoff)
+                    toast("Handoff received by your partner")
+                } else {
+                    toast("Handoff confirmation arrived without the saved notes. Please reconnect.")
+                }
                 return
             }
             DrawingMessage.FoldFinishRequest -> {
-                (currentActivity as? IndexPaint)?.onFoldFinishRequested()
+                // The drawer ending the session is the one who decides. Chunks for
+                // the final layer arrive before this command on the ordered stream.
+                val revealed = revealFoldLayers()
+                sendMessage(DrawingMessage.FoldFinishResponse(revealed))
                 return
             }
             is DrawingMessage.FoldFinishResponse -> {
                 if (!foldFinishPending) return
                 foldFinishPending = false
-                if (command.accepted) revealFoldLayers() else (currentActivity as? IndexPaint)?.onFoldSessionChanged()
+                if (!command.accepted || !revealFoldLayers()) {
+                    toast("The whole drawing could not be revealed. Keep the session open and try again.")
+                    (currentActivity as? IndexPaint)?.onFoldSessionChanged()
+                }
                 return
             }
             DrawingMessage.FoldCancel -> {
@@ -255,6 +329,10 @@ class PaintApp : Application() {
     fun peerDisplayName(): String = connectedDeviceName?.takeIf { it.isNotBlank() } ?: "peer"
     fun chooseSessionMode(mode: SessionMode) {
         if (peerParticipantId == null || sessionMode != null || foldSessionActive) return
+        if (mode == SessionMode.FOLD_GAME && peerProtocolVersion != CURRENT_PROTOCOL_VERSION) {
+            toast("Both devices need the same IndexPaint version to play Fold Game")
+            return
+        }
         localSessionModeChoice = mode
         if (mode == SessionMode.FOLD_GAME) {
             val entropy = ByteArray(FOLD_SEED_BYTES).also(secureRandom::nextBytes)
@@ -307,6 +385,12 @@ class PaintApp : Application() {
         foldRevealed = false
         foldFinishPending = false
         foldTurnEnded = false
+        commandHandler.removeCallbacks(yieldRetryRunnable)
+        pendingYieldMessageId = null
+        pendingYieldRetryCount = 0
+        lastCommittedYieldMessageId = null
+        lastCommittedYieldIndex = -1
+        lastCommittedYieldBoundary = Float.NaN
         peerFoldPreview = null
         foldLayers.values.forEach { if (!it.isRecycled) it.recycle() }
         foldLayers.clear()
@@ -334,12 +418,12 @@ class PaintApp : Application() {
 
     fun foldProgressPercent(): Int {
         val remaining = (1f - foldPreviousBoundary).coerceAtLeast(0.0001f)
-        return (((foldBoundary - foldPreviousBoundary) / remaining) * 100f).toInt().coerceIn(5, 95)
+        return (((foldBoundary - foldPreviousBoundary) / remaining) * 100f).toInt().coerceIn(5, 100)
     }
 
     fun setFoldProgressPercent(percent: Int) {
         if (!isLocalFoldTurn() || foldFinishPending) return
-        val fraction = percent.coerceIn(5, 95) / 100f
+        val fraction = percent.coerceIn(5, 100) / 100f
         foldBoundary = foldPreviousBoundary + (1f - foldPreviousBoundary) * fraction
         publishFoldPreview()
         view?.invalidate()
@@ -348,8 +432,12 @@ class PaintApp : Application() {
     }
 
     fun endTurnOrYield() {
-        if (!isLocalFoldTurn() || foldFinishPending || !isConnectedToPeer()) return
+        if (!isLocalFoldTurn() || foldFinishPending || foldYieldPending || !isConnectedToPeer()) return
         if (!foldTurnEnded) {
+            if (foldBoundary >= 1f) {
+                requestFoldFinish()
+                return
+            }
             foldLayers[foldIndex]?.takeIf { !it.isRecycled }?.recycle()
             foldLayers[foldIndex] = checkNotNull(view).snapshotDrawingLayer()
             foldTurnEnded = true
@@ -366,44 +454,98 @@ class PaintApp : Application() {
         }
         val layer = foldLayers[foldIndex] ?: localBitmap.copy(Bitmap.Config.ARGB_8888, true)
         foldLayers[foldIndex] = layer
-        if (!sendFoldLayer(foldIndex, layer)) {
-            toast("Could not send drawing. Check the connection and try again.")
-            return
-        }
         val handoffMetadata = drawingView.copyPendingHandoffBitmap()
-        if (!sendFoldHandoffAnnotation(foldIndex, handoffMetadata) || !sendMessage(DrawingMessage.FoldYield(foldIndex, foldBoundary))) {
-            handoffMetadata.recycle()
-            toast("Could not send handoff. Check the connection and try again.")
-            return
-        }
-        advanceFold(foldIndex, foldBoundary, handoffMetadata)
+        val committedBoundary = foldBoundary
+        val committedIndex = foldIndex
+        foldYieldPending = true
+        yieldAttemptId++
+        val messageId = UUID.randomUUID().toString()
+        pendingYieldMessageId = messageId
+        pendingYieldRetryCount = 0
+        pendingYieldBoundary = committedBoundary
+        pendingYieldBitmap = handoffMetadata
+        (currentActivity as? IndexPaint)?.onFoldSessionChanged()
+        updateFoldAccessibility()
+        toast("Sending drawing and handoff notes…")
+        transmitPendingYield(messageId, committedIndex, committedBoundary, layer, handoffMetadata)
     }
 
     fun isHandoffMetadataPhase(): Boolean = foldSessionActive && foldTurnEnded && isLocalFoldTurn()
 
     fun requestFoldFinish() {
-        if (!isLocalFoldTurn() || foldFinishPending || foldTurnEnded || !isConnectedToPeer()) return
+        if (!isLocalFoldTurn() || foldFinishPending || foldYieldPending || !isConnectedToPeer()) return
         val layer = checkNotNull(view).snapshotDrawingLayer()
         foldLayers[foldIndex]?.takeIf { !it.isRecycled }?.recycle()
         foldLayers[foldIndex] = layer
-        if (!sendFoldLayer(foldIndex, layer)) { toast("Could not send drawing"); return }
         foldFinishPending = true
-        if (!sendMessage(DrawingMessage.FoldFinishRequest)) foldFinishPending = false
+        (currentActivity as? IndexPaint)?.onFoldSessionChanged()
+        if (!sendFoldLayer(foldIndex, layer)) {
+            foldFinishPending = false
+            toast("Could not send drawing")
+            (currentActivity as? IndexPaint)?.onFoldSessionChanged()
+            return
+        }
+        if (!sendMessage(DrawingMessage.FoldFinishRequest)) {
+            foldFinishPending = false
+            toast("Could not send the end-session request")
+        } else {
+            toast("Ending session and revealing the whole drawing…")
+        }
         (currentActivity as? IndexPaint)?.onFoldSessionChanged()
         updateFoldAccessibility()
     }
 
-    fun respondToFoldFinish(accepted: Boolean) {
-        if (sendMessage(DrawingMessage.FoldFinishResponse(accepted)) && accepted) revealFoldLayers()
+    private fun retryPendingYield() {
+        val messageId = pendingYieldMessageId ?: return
+        val index = foldIndex
+        val layer = foldLayers[index]
+        val metadata = pendingYieldBitmap
+        if (!foldYieldPending || layer == null || metadata == null || metadata.isRecycled || !isConnectedToPeer()) {
+            failPendingYield("Handoff could not be retried. Check the connection and try again.")
+            return
+        }
+        if (pendingYieldRetryCount >= MAX_YIELD_RETRIES) {
+            failPendingYield("The other device did not confirm the handoff. Your turn is still yours.")
+            return
+        }
+        pendingYieldRetryCount++
+        transmitPendingYield(messageId, index, pendingYieldBoundary, layer, metadata)
     }
 
-    private fun sendFoldLayer(index: Int, layer: Bitmap): Boolean {
+    private fun transmitPendingYield(messageId: String, index: Int, boundary: Float, layer: Bitmap, metadata: Bitmap) {
+        Thread({
+            val sent = sendFoldLayer(index, layer, "$messageId-d") &&
+                sendFoldHandoffAnnotation(index, metadata, "$messageId-m") &&
+                sendMessage(DrawingMessage.FoldYield(messageId, index, boundary))
+            commandHandler.post {
+                if (pendingYieldMessageId != messageId || !foldYieldPending || foldIndex != index) return@post
+                if (!sent) Log.w(TAG, "Handoff $messageId send failed; queued retry ${pendingYieldRetryCount + 1}")
+                val delay = (YIELD_RETRY_BASE_MS * (1L shl pendingYieldRetryCount.coerceAtMost(3))).coerceAtMost(YIELD_RETRY_MAX_MS)
+                commandHandler.removeCallbacks(yieldRetryRunnable)
+                commandHandler.postDelayed(yieldRetryRunnable, delay)
+            }
+        }, "IndexPaint-yield-$messageId").start()
+    }
+
+    private fun failPendingYield(message: String) {
+        commandHandler.removeCallbacks(yieldRetryRunnable)
+        foldYieldPending = false
+        pendingYieldMessageId = null
+        pendingYieldRetryCount = 0
+        pendingYieldBitmap?.takeIf { !it.isRecycled }?.recycle()
+        pendingYieldBitmap = null
+        toast(message)
+        (currentActivity as? IndexPaint)?.onFoldSessionChanged()
+        updateFoldAccessibility()
+    }
+
+    private fun sendFoldLayer(index: Int, layer: Bitmap, transferId: String = UUID.randomUUID().toString()): Boolean {
         return runCatching {
             val output = ByteArrayOutputStream()
-            layer.compress(Bitmap.CompressFormat.PNG, 100, output)
+            check(layer.compress(Bitmap.CompressFormat.PNG, 100, output)) { "PNG encoder rejected fold layer" }
             val encoded = Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)
-            val transferId = UUID.randomUUID().toString()
             val total = (encoded.length + FOLD_IMAGE_CHUNK_CHARS - 1) / FOLD_IMAGE_CHUNK_CHARS
+            Log.i(TAG, "Sending fold layer $transferId: ${layer.width}x${layer.height}, ${output.size()} bytes, $total chunks")
             for (chunkIndex in 0 until total) {
                 val start = chunkIndex * FOLD_IMAGE_CHUNK_CHARS
                 check(sendMessage(DrawingMessage.FoldLayerChunk(
@@ -415,13 +557,13 @@ class PaintApp : Application() {
         }.onFailure { Log.e(TAG, "Could not send hidden fold", it) }.getOrDefault(false)
     }
 
-    private fun sendFoldHandoffAnnotation(index: Int, annotation: Bitmap): Boolean {
+    private fun sendFoldHandoffAnnotation(index: Int, annotation: Bitmap, transferId: String = UUID.randomUUID().toString()): Boolean {
         return runCatching {
             val output = ByteArrayOutputStream()
-            annotation.compress(Bitmap.CompressFormat.PNG, 100, output)
+            check(annotation.compress(Bitmap.CompressFormat.PNG, 100, output)) { "PNG encoder rejected handoff notes" }
             val encoded = Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)
-            val transferId = UUID.randomUUID().toString()
             val total = (encoded.length + FOLD_IMAGE_CHUNK_CHARS - 1) / FOLD_IMAGE_CHUNK_CHARS
+            Log.i(TAG, "Sending handoff notes $transferId: ${annotation.width}x${annotation.height}, ${output.size()} bytes, $total chunks")
             for (chunkIndex in 0 until total) {
                 val start = chunkIndex * FOLD_IMAGE_CHUNK_CHARS
                 check(sendMessage(DrawingMessage.FoldHandoffChunk(
@@ -436,6 +578,7 @@ class PaintApp : Application() {
     private fun receiveFoldLayerChunk(chunk: DrawingMessage.FoldLayerChunk) {
         if (!foldSessionActive || chunk.foldIndex !in 0..foldIndex + 1) return
         val bitmap = addChunk(foldImageTransfers, chunk.transferId, chunk.foldIndex, chunk.index, chunk.total, chunk.base64, FOLD_IMAGE_CHUNK_CHARS) ?: return
+        Log.i(TAG, "Received fold layer ${chunk.transferId}: ${bitmap.width}x${bitmap.height}")
         storeFoldLayer(chunk.foldIndex, bitmap)
         view?.invalidate()
     }
@@ -443,6 +586,7 @@ class PaintApp : Application() {
     private fun receiveFoldHandoffChunk(chunk: DrawingMessage.FoldHandoffChunk) {
         if (!foldSessionActive || chunk.foldIndex !in foldIndex..foldIndex + 1) return
         val bitmap = addChunk(foldHandoffTransfers, chunk.transferId, chunk.foldIndex, chunk.index, chunk.total, chunk.base64, FOLD_IMAGE_CHUNK_CHARS) ?: return
+        Log.i(TAG, "Received handoff notes ${chunk.transferId}: ${bitmap.width}x${bitmap.height}")
         incomingHandoffAnnotations.remove(chunk.foldIndex)?.takeIf { !it.isRecycled }?.recycle()
         incomingHandoffAnnotations[chunk.foldIndex] = bitmap
     }
@@ -457,7 +601,10 @@ class PaintApp : Application() {
         if (id.length !in 1..64 || !id.all { it.isLetterOrDigit() || it == '-' } ||
             total !in 1..maxChunks || index !in 0 until total || data.length !in 1..chunkChars ||
             !data.all { it.isLetterOrDigit() || it == '+' || it == '/' || it == '=' }
-        ) return null
+        ) {
+            Log.w(TAG, "Rejected chunk id=$id index=$index/$total chars=${data.length}")
+            return null
+        }
         val existing = transfers[id]
         // A new ID starts a retry/replacement. Dropping the old partial assembly
         // avoids pinning the channel after a truncated send while keeping one bounded assembly per kind.
@@ -478,8 +625,17 @@ class PaintApp : Application() {
         return runCatching {
             val encoded = transfer.chunks.joinToString(separator = "") { checkNotNull(it) }
             val bytes = Base64.decode(encoded, Base64.NO_WRAP)
-            if (bytes.size > MAX_IMAGE_BYTES) return@runCatching null
-            decodeDocumentBitmap(bytes)
+            if (bytes.size > MAX_IMAGE_BYTES) {
+                Log.w(TAG, "Rejected completed image transfer $id: ${bytes.size} bytes exceeds limit")
+                return@runCatching null
+            }
+            decodeDocumentBitmap(bytes).also { bitmap ->
+                if (bitmap == null) {
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                    Log.w(TAG, "Rejected completed image transfer $id: ${bounds.outWidth}x${bounds.outHeight}, ${bytes.size} bytes")
+                }
+            }
         }.onFailure { Log.w(TAG, "Ignoring invalid image transfer", it) }.getOrNull()
     }
 
@@ -584,10 +740,10 @@ class PaintApp : Application() {
         updateFoldAccessibility()
     }
 
-    private fun revealFoldLayers() {
+    private fun revealFoldLayers(): Boolean {
         if ((0..foldIndex).any { it !in foldLayers && it !in foldLayerFiles }) {
             Log.w(TAG, "Reveal is waiting for missing hidden layers")
-            return
+            return false
         }
         val finalBitmap = Bitmap.createBitmap(localBitmap.width, localBitmap.height, Bitmap.Config.ARGB_8888)
         Canvas(finalBitmap).apply {
@@ -613,6 +769,7 @@ class PaintApp : Application() {
         (currentActivity as? IndexPaint)?.onFoldSessionChanged()
         updateFoldAccessibility()
         toast("All folds revealed")
+        return true
     }
 
     private fun updateFoldAccessibility() {
@@ -624,8 +781,9 @@ class PaintApp : Application() {
         val metadataVisible = if (view?.hasLastHandoffMetadata() == true) " Handoff metadata is visible." else ""
         canvasView.contentDescription = when {
             !isLocalFoldTurn() -> "Index Paint canvas. Waiting for ${peerDisplayName()}. Turn ${foldIndex + 1}.$metadataVisible"
-            foldTurnEnded -> "Index Paint canvas. Add handoff notes with your finger or Text. They are separate from the final picture. Press Yield to send them. ${view?.pendingHandoffMarkCount() ?: 0} notes added.$metadataVisible"
-            else -> "Index Paint canvas. Your turn to draw. Turn ${foldIndex + 1}. Press End turn to add handoff metadata.$metadataVisible"
+            foldTurnEnded -> "Index Paint canvas. Add handoff notes with your finger or Text, then Yield to pass the turn, or End session to reveal the whole drawing. ${view?.pendingHandoffMarkCount() ?: 0} notes added.$metadataVisible"
+            foldBoundary >= 1f -> "Index Paint canvas. Your turn to draw. Turn ${foldIndex + 1}. End session to reveal the whole drawing.$metadataVisible"
+            else -> "Index Paint canvas. Your turn to draw. Turn ${foldIndex + 1}. Press End turn to add handoff metadata, or End session to reveal the whole drawing.$metadataVisible"
         }
     }
 
@@ -651,7 +809,7 @@ class PaintApp : Application() {
     }
 
     private fun isModeNegotiation(message: DrawingMessage): Boolean = when (message) {
-        is DrawingMessage.FoldHello, is DrawingMessage.SessionModeChoice,
+        is DrawingMessage.FoldHello, is DrawingMessage.ProtocolVersion, is DrawingMessage.SessionModeChoice,
         is DrawingMessage.FoldProposal, DrawingMessage.FoldCancel -> true
         else -> false
     }
@@ -659,6 +817,7 @@ class PaintApp : Application() {
     private fun isFoldControl(message: DrawingMessage): Boolean = when (message) {
         is DrawingMessage.FoldPreview, is DrawingMessage.FoldLayerChunk,
         is DrawingMessage.FoldHandoffChunk, is DrawingMessage.FoldYield,
+        is DrawingMessage.FoldYieldAck,
         DrawingMessage.FoldFinishRequest, is DrawingMessage.FoldFinishResponse -> true
         else -> false
     }
@@ -699,8 +858,9 @@ class PaintApp : Application() {
                     publishFoldPreview()
                     return true
                 }
-                is DrawingMessage.FoldHello, is DrawingMessage.FoldProposal, is DrawingMessage.FoldPreview,
+                is DrawingMessage.FoldHello, is DrawingMessage.ProtocolVersion, is DrawingMessage.FoldProposal, is DrawingMessage.FoldPreview,
                 is DrawingMessage.FoldLayerChunk, is DrawingMessage.FoldHandoffChunk, is DrawingMessage.FoldYield, DrawingMessage.FoldCancel,
+                is DrawingMessage.FoldYieldAck,
                 DrawingMessage.FoldFinishRequest, is DrawingMessage.FoldFinishResponse -> Unit
                 else -> return true
             }
@@ -815,10 +975,17 @@ class PaintApp : Application() {
         const val REQUEST_DISCOVERABLE = 1233
         const val REQUEST_DEVICE_LIST = 1234
         private const val IMAGE_CHUNK_CHARS = 150
-        private const val FOLD_IMAGE_CHUNK_CHARS = 120
+        private const val FOLD_IMAGE_CHUNK_CHARS = 180
+        private const val CURRENT_PROTOCOL_VERSION = 2
+        private const val MAX_YIELD_RETRIES = 6
+        private const val YIELD_RETRY_BASE_MS = 750L
+        private const val YIELD_RETRY_MAX_MS = 6_000L
         private const val MAX_IMAGE_BYTES = 15 * 1024 * 1024
         private const val MAX_ENCODED_IMAGE_CHARS = 20 * 1024 * 1024
-        private const val MAX_DOCUMENT_PIXELS = 1536L * 2171L
+        // Match createPaperBitmap(): the A4 height is derived from the float aspect ratio
+        // and truncation, which yields 2172 pixels. Keep the transfer validation in sync.
+        private val MAX_DOCUMENT_PIXELS = DrawingDocument.RASTER_WIDTH.toLong() *
+            DrawingDocument.heightFor(PaperSize.A4)
         private const val TRANSFER_TIMEOUT_MS = 30_000L
         private const val FOLD_SEED_BYTES = 32
         private const val DEFAULT_FOLD_FRACTION = 0.5f
