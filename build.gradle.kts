@@ -20,14 +20,10 @@ tasks.register("publishInternal") {
     group = "publishing"
     description = "Builds, verifies, and publishes the signed release bundle to Google Play Internal testing."
     dependsOn(":app:publishReleaseBundle")
-    finalizedBy(":app:removeLocalPlayPublisherCredential")
 }
 
 tasks.configureEach {
     if (name.startsWith("commitEditFor")) {
-        val commitTask = this
-        project(":app").tasks.named("removeLocalPlayPublisherCredential") {
-            mustRunAfter(commitTask)
-        }
+        finalizedBy(":app:removeLocalPlayPublisherCredential")
     }
 }

@@ -184,6 +184,8 @@ jobs:
           INDEXPAINT_KEY_PASSWORD: ${{ secrets.INDEXPAINT_KEY_PASSWORD }}
           ANDROID_PUBLISHER_CREDENTIALS: ${{ secrets.ANDROID_PUBLISHER_CREDENTIALS }}
         run: |
+          set -euo pipefail
+          trap 'rm -f "${GITHUB_WORKSPACE}/source/app/build/tmp/play-publisher/credentials.json"' EXIT
           "${GITHUB_WORKSPACE}/source/gradlew" --no-daemon -p "${GITHUB_WORKSPACE}/source" publishInternal
 
       - name: Write build provenance
