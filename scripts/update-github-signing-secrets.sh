@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Authentication is deliberately checked before any interactive prompt.
+# Authentication is checked before any other interactive prompt.
 if ! command -v gh >/dev/null 2>&1; then
   echo "GitHub CLI (gh) is required." >&2
   exit 1
 fi
 gh auth status
+
+# Check every external tool before asking for the local keystore credentials.
+for tool in expect keytool openssl shasum awk cp chmod mkdir mktemp base64 tr rm dirname basename pwd cat; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "Required command not found: $tool" >&2; exit 1; }
+done
 
 repo=""
 prefix="INDEXPAINT"
@@ -39,13 +44,15 @@ if [[ ! "$prefix" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
   echo "Secret prefix must use uppercase letters, digits, and underscores." >&2
   exit 2
 fi
-for tool in java javac openssl shasum; do
-  command -v "$tool" >/dev/null 2>&1 || { echo "Required command not found: $tool" >&2; exit 1; }
-done
+secret_bundle="${prefix}_SIGNING_BUNDLE"
+if ! gh secret list --repo "$repo" >/dev/null; then
+  echo "Could not access Actions secrets for $repo; verify repository permissions before entering keystore passwords." >&2
+  exit 1
+fi
 
 if [[ -z "$keystore_arg" ]]; then
   while :; do
-    read -r -p "Path to the original local JKS: " keystore_arg
+    IFS= read -r -p "Path to the original local JKS: " keystore_arg
     [[ -f "$keystore_arg" ]] && break
     echo "Sorry, couldn't find that file. Try again."
   done
@@ -55,19 +62,142 @@ elif [[ ! -f "$keystore_arg" ]]; then
 fi
 keystore="$(cd "$(dirname "$keystore_arg")" && pwd)/$(basename "$keystore_arg")"
 alias="${INDEXPAINT_KEY_ALIAS:-vh}"
-read -r -p "Key alias [$alias]: " alias_input
+IFS= read -r -p "Key alias [$alias]: " alias_input
 alias="${alias_input:-$alias}"
+keystore_type="${INDEXPAINT_KEYSTORE_TYPE:-JKS}"
 
-read -r -s -p "Current local keystore password: " old_store_password; echo
-read -r -s -p "Current local private-key password: " old_key_password; echo
+IFS= read -r -s -p "Current local keystore password: " old_store_password; echo
+IFS= read -r -s -p "Current local private-key password: " old_key_password; echo
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/github-signing-secrets.XXXXXX")"
 chmod 700 "$tmp"
 cleanup() {
-  unset old_store_password old_key_password new_store_password new_key_password keystore_b64
-  rm -rf -- "$tmp"
+  local exit_status=$?
+  trap - EXIT HUP INT TERM
+  unset old_store_password old_key_password new_store_password new_key_password keystore_b64 bundle
+  if ! rm -rf -- "$tmp"; then
+    echo "WARNING: Could not remove temporary directory: $tmp" >&2
+    exit_status=1
+  fi
+  exit "$exit_status"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+expect_store_password_change() {
+  OLD_STORE_PASSWORD="$old_store_password" \
+  NEW_STORE_PASSWORD="$new_store_password" \
+  KEYSTORE_COPY="$tmp/ci-upload.jks" \
+  KEYSTORE_TYPE="$keystore_type" \
+  LC_ALL=C expect <<'EXPECT'
+log_user 0
+spawn keytool -storepasswd -keystore $env(KEYSTORE_COPY) -storetype $env(KEYSTORE_TYPE)
+expect {
+  -re {Enter keystore password:} { send -- "$env(OLD_STORE_PASSWORD)\r" }
+  timeout { exit 1 }
+  eof { exit 1 }
+}
+expect {
+  -re {New keystore password:} { send -- "$env(NEW_STORE_PASSWORD)\r" }
+  timeout { exit 1 }
+  eof { exit 1 }
+}
+expect {
+  -re {Re-enter new password:} { send -- "$env(NEW_STORE_PASSWORD)\r" }
+  timeout { exit 1 }
+  eof { exit 1 }
+}
+expect eof
+set result [wait]
+if {[lindex $result 2] != 0 || [lindex $result 3] != 0} { exit 1 }
+EXPECT
+}
+
+expect_key_password_change() {
+  OLD_KEY_PASSWORD="$old_key_password" \
+  NEW_STORE_PASSWORD="$new_store_password" \
+  NEW_KEY_PASSWORD="$new_key_password" \
+  KEYSTORE_COPY="$tmp/ci-upload.jks" \
+  KEYSTORE_TYPE="$keystore_type" \
+  KEY_ALIAS="$alias" \
+  LC_ALL=C expect <<'EXPECT'
+log_user 0
+spawn keytool -keypasswd -alias $env(KEY_ALIAS) -keystore $env(KEYSTORE_COPY) -storetype $env(KEYSTORE_TYPE)
+expect {
+  -re {Enter keystore password:} { send -- "$env(NEW_STORE_PASSWORD)\r" }
+  timeout { exit 1 }
+  eof { exit 1 }
+}
+expect {
+  -re {Enter key password.*:} { send -- "$env(OLD_KEY_PASSWORD)\r" }
+  timeout { exit 1 }
+  eof { exit 1 }
+}
+expect {
+  -re {New key password.*:} { send -- "$env(NEW_KEY_PASSWORD)\r" }
+  timeout { exit 1 }
+  eof { exit 1 }
+}
+expect {
+  -re {Re-enter new key password.*:} { send -- "$env(NEW_KEY_PASSWORD)\r" }
+  timeout { exit 1 }
+  eof { exit 1 }
+}
+expect eof
+set result [wait]
+if {[lindex $result 2] != 0 || [lindex $result 3] != 0} { exit 1 }
+EXPECT
+}
+
+certificate_fingerprint() {
+  local path="$1"
+  local password="$2"
+  KEYSTORE_PATH="$path" \
+  KEYSTORE_PASSWORD="$password" \
+  KEYSTORE_TYPE="$keystore_type" \
+  KEY_ALIAS="$alias" \
+  LC_ALL=C expect <<'EXPECT' | awk -F ': ' '/SHA1:/{print $2; exit}'
+log_user 1
+spawn keytool -list -v -alias $env(KEY_ALIAS) -keystore $env(KEYSTORE_PATH) -storetype $env(KEYSTORE_TYPE)
+expect {
+  -re {Enter keystore password:} { send -- "$env(KEYSTORE_PASSWORD)\\r" }
+  timeout { exit 1 }
+  eof { exit 1 }
+}
+expect eof
+set result [wait]
+if {[lindex $result 2] != 0 || [lindex $result 3] != 0} { exit 1 }
+EXPECT
+}
+
+verify_private_key_password() {
+  KEYSTORE_COPY="$tmp/ci-upload.jks" \
+  KEYSTORE_PASSWORD="$new_store_password" \
+  KEY_PASSWORD="$new_key_password" \
+  KEYSTORE_TYPE="$keystore_type" \
+  KEY_ALIAS="$alias" \
+  CSR_PATH="$tmp/verify.csr" \
+  LC_ALL=C expect <<'EXPECT'
+log_user 0
+spawn keytool -certreq -alias $env(KEY_ALIAS) -keystore $env(KEYSTORE_COPY) -storetype $env(KEYSTORE_TYPE) -file $env(CSR_PATH)
+expect {
+  -re {Enter keystore password:} { send -- "$env(KEYSTORE_PASSWORD)\\r" }
+  timeout { exit 1 }
+  eof { exit 1 }
+}
+expect {
+  -re {Enter key password.*:} { send -- "$env(KEY_PASSWORD)\\r" }
+  timeout { exit 1 }
+  eof { exit 1 }
+}
+expect eof
+set result [wait]
+if {[lindex $result 2] != 0 || [lindex $result 3] != 0} { exit 1 }
+EXPECT
+  [[ -s "$tmp/verify.csr" ]]
+}
 
 source_hash="$(shasum -a 256 "$keystore" | awk '{print $1}')"
 new_store_password="$(openssl rand -hex 32)"
@@ -75,59 +205,65 @@ new_key_password="$(openssl rand -hex 32)"
 copy="$tmp/ci-upload.jks"
 cp "$keystore" "$copy"
 chmod 600 "$copy"
-mkdir "$tmp/classes"
-javac -d "$tmp/classes" "$(dirname "$0")/ReencryptKeystore.java"
-fingerprint="$(OLD_STORE_PASSWORD="$old_store_password" \
-  OLD_KEY_PASSWORD="$old_key_password" \
-  NEW_STORE_PASSWORD="$new_store_password" \
-  NEW_KEY_PASSWORD="$new_key_password" \
-  INDEXPAINT_KEYSTORE_TYPE="${INDEXPAINT_KEYSTORE_TYPE:-JKS}" \
-  java -cp "$tmp/classes" ReencryptKeystore "$keystore" "$copy" "$alias")"
 
+source_fingerprint="$(certificate_fingerprint "$keystore" "$old_store_password")"
+[[ -n "$source_fingerprint" ]] || { echo "Could not read the source certificate fingerprint." >&2; exit 1; }
+if ! expect_store_password_change; then
+  echo "Could not re-encrypt the temporary copy with its new keystore password. GitHub was not changed." >&2
+  exit 1
+fi
+if ! expect_key_password_change; then
+  echo "Could not re-encrypt the temporary copy with its new private-key password. GitHub was not changed." >&2
+  exit 1
+fi
+copy_fingerprint="$(certificate_fingerprint "$copy" "$new_store_password")"
+if [[ -z "$copy_fingerprint" || "$copy_fingerprint" != "$source_fingerprint" ]]; then
+  echo "Temporary keystore validation failed: certificate fingerprint does not match the source." >&2
+  exit 1
+fi
+if ! verify_private_key_password; then
+  echo "Temporary keystore validation failed: the private key could not sign a certificate request with its new password." >&2
+  exit 1
+fi
 if [[ "$(shasum -a 256 "$keystore" | awk '{print $1}')" != "$source_hash" ]]; then
   echo "The source keystore changed unexpectedly; refusing to update GitHub." >&2
   exit 1
 fi
+
 keystore_b64="$(base64 < "$copy" | tr -d '\n')"
 if (( ${#keystore_b64} > 48000 )); then
   echo "Base64 keystore exceeds the conservative GitHub Actions secret size limit." >&2
   exit 1
 fi
 
-secret_keystore="${prefix}_UPLOAD_KEYSTORE_BASE64"
-secret_store_password="${prefix}_KEYSTORE_PASSWORD"
-secret_key_password="${prefix}_KEY_PASSWORD"
-variable_alias="${prefix}_KEY_ALIAS"
+# One secret update keeps the JKS and its two passwords in the same generation.
+bundle="$(printf '%s\n%s\n%s\n%s\n%s' "$keystore_b64" "$new_store_password" "$new_key_password" "$alias" "$keystore_type")"
 cat <<EOF
 
 Plan for $repo:
   Read the local source keystore: $keystore
   Re-encrypt a temporary copy for alias: $alias
-  Signing certificate SHA-1: $fingerprint
-  Update repository secret: $secret_keystore
-  Update repository secret: $secret_store_password
-  Update repository secret: $secret_key_password
-  Set repository variable:   $variable_alias
+  Signing certificate SHA-1: $source_fingerprint
+  Validate the copy's new store password, key password, and matching certificate fingerprint
+  Replace the single repository secret: $secret_bundle
 
-The source keystore will remain unchanged. Two new random passwords were generated;
-they will not be displayed or saved locally. Continue with these GitHub updates? [y/N]
+The source keystore will remain unchanged. The new passwords will not be printed
+or written to a file by this script; they are held briefly in process memory and
+sent to GitHub in one signing bundle. Continue? [y/N]
 EOF
-read -r confirmation
+IFS= read -r confirmation
 if [[ "$confirmation" != "y" && "$confirmation" != "Y" ]]; then
   echo "Cancelled. No GitHub settings were changed."
   exit 0
 fi
 
-echo "Writing repository secret $secret_keystore..."
-printf '%s' "$keystore_b64" | gh secret set "$secret_keystore" --repo "$repo"
-echo "Writing repository secret $secret_store_password..."
-printf '%s' "$new_store_password" | gh secret set "$secret_store_password" --repo "$repo"
-echo "Writing repository secret $secret_key_password..."
-printf '%s' "$new_key_password" | gh secret set "$secret_key_password" --repo "$repo"
-gh variable set "$variable_alias" --repo "$repo" --body "$alias"
-
+echo "Writing repository secret $secret_bundle..."
+if ! printf '%s' "$bundle" | gh secret set "$secret_bundle" --repo "$repo"; then
+  echo "GitHub did not confirm the bundle update. Do not build yet; rerun this script from the unchanged source keystore." >&2
+  exit 1
+fi
 if [[ "$(shasum -a 256 "$keystore" | awk '{print $1}')" != "$source_hash" ]]; then
   echo "ERROR: source keystore hash changed during the update." >&2
   exit 1
 fi
-echo "GitHub signing secrets updated. Original local keystore is unchanged."
+echo "GitHub signing bundle updated. Original local keystore is unchanged."

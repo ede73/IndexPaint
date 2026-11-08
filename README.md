@@ -57,7 +57,7 @@ When we are ready to enable publishing:
 3. Create a **JSON key** for the service account and download it. This JSON file contains a private credential. Keep it out of the repository, messages, and build artifacts.
 4. In [Play Console](https://play.google.com/console/), invite the service account email under **Users and permissions**. Grant app access to IndexPaint and **Release apps to testing tracks**. Do not grant Production release or account-admin permissions. See Google's [API setup guide](https://developers.google.com/android-publisher/getting_started) and [permission reference](https://support.google.com/googleplay/android-developer/answer/9844686?hl=en).
 5. Add the JSON file contents as the repository Actions secret `ANDROID_PUBLISHER_CREDENTIALS` (Repository → **Settings → Secrets and variables → Actions → New repository secret**). Do not add it as a variable or commit it. GitHub CLI can also set it by reading the file: `gh secret set ANDROID_PUBLISHER_CREDENTIALS < /path/to/service-account.json`.
-6. Confirm the non-secret repository variable `INDEXPAINT_KEY_ALIAS` matches the alias in the upload keystore. The Android application ID (`fi.iki.ede.IndexPaint`) and Play track name (`internal`) are identifiers, not credentials; they do not need to be secret. The workflow already targets the Internal testing track and only publishes when the `publish_internal` input is enabled.
+6. The Android application ID (`fi.iki.ede.IndexPaint`) and Play track name (`internal`) are identifiers, not credentials; they do not need to be secret. The workflow already targets the Internal testing track and only publishes when the `publish_internal` input is enabled.
 
 The service-account JSON is the only additional Play publishing secret. The workflow exposes it only to the publishing step. GitHub does not show a saved secret value again, so keep the downloaded JSON only until it has been entered successfully, then delete that local download. If it is lost later, create a replacement JSON key and update the GitHub secret.
 
@@ -65,10 +65,9 @@ The service-account JSON is the only additional Play publishing secret. The work
 
 The manually triggered [`Android Mac mini build`](.github/workflows/android-mac-mini.yml) workflow runs on a self-hosted Mac runner. GitHub supplies the repository's signing secrets to the job; the runner decodes the upload keystore into a temporary file, signs the AAB locally, uploads the AAB as a seven-day workflow artifact, then removes the keystore and checked-out workspace. The runner uses the job-provided signing secrets and does not depend on a macOS credential store. It only handles manually dispatched jobs; publishing requires explicitly enabling the `publish_internal` input.
 
-The helper writes these **repository** Actions secrets for IndexPaint:
+The helper writes one **repository** Actions secret for signing IndexPaint:
 
-- `INDEXPAINT_UPLOAD_KEYSTORE_BASE64`: the CI copy of the upload keystore encoded as one base64 string.
-- `INDEXPAINT_KEYSTORE_PASSWORD` and `INDEXPAINT_KEY_PASSWORD`: fresh random passwords for that CI copy. The helper below generates them; you do not need to know or store them.
+- `INDEXPAINT_SIGNING_BUNDLE`: the CI-only keystore copy, two fresh random passwords, the key alias, and keystore type in one bundle. The helper below generates it; you do not need to know or store the passwords.
 - `ANDROID_PUBLISHER_CREDENTIALS`: the Google Play service-account JSON, only needed if you choose `publish_internal`.
 
 To create and upload the CI-only keystore copy and its passwords, run this from the project checkout after `gh` is authenticated:
@@ -77,7 +76,7 @@ To create and upload the CI-only keystore copy and its passwords, run this from 
 ./scripts/update-github-signing-secrets.sh [path/to/original-upload.jks]
 ```
 
-The path is optional; without it, the script asks for the file and retries if it cannot find it. It checks `gh auth status` before prompting for anything else, asks for the original keystore and private-key passwords without echoing them, then makes a temporary copy with two independent random shell-safe passwords. It shows the target repository, alias, certificate fingerprint, and GitHub secret/variable names before asking to proceed. It uploads the copy and random passwords to repository Actions secrets and sets the non-secret alias variable. It never displays or saves the new passwords, and it never changes the original keystore. Keep signing secrets specific to each repository.
+The path is optional; without it, the script asks for the file and retries if it cannot find it. It checks `gh auth status`, all required commands, and repository secret access before asking for the keystore passwords. It then uses `keytool` to make a temporary copy with two independent random shell-safe passwords. Before the confirmation prompt, it reopens the copy with the new passwords and verifies that the alias and signing certificate match the source. It writes one `INDEXPAINT_SIGNING_BUNDLE` secret, keeping the keystore and passwords in the same generation so a partial multi-secret update cannot leave mismatched values. If GitHub does not confirm the write, rerun the helper from the unchanged local keystore before building. The new passwords are not displayed or written to a file by the script; they are held briefly in process memory. Temporary cleanup is checked and a remaining temporary-directory path is reported if removal fails. The original keystore is left untouched. Keep signing bundles specific to each repository.
 
 The workflow exposes the Play credential only to the publish step.
 
