@@ -32,8 +32,8 @@ concurrency:
 
 jobs:
   release:
-    # Keep this workflow definition on main. source_ref selects only the application code.
-    if: github.actor == 'ede73' && github.triggering_actor == 'ede73' && github.ref == 'refs/heads/main'
+    # Only ede73 may start or rerun this release workflow, from any branch or PR ref.
+    if: github.actor == 'ede73' && github.triggering_actor == 'ede73'
     runs-on: [self-hosted, macOS, indexpaint-release]
     timeout-minutes: 90
     env:
