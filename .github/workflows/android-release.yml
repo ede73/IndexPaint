@@ -74,11 +74,11 @@ jobs:
           path: source
           persist-credentials: false
 
-      - name: Check out trusted main build scripts for publishing an existing AAB
+      - name: Check out selected release scripts for publishing an existing AAB
         if: inputs.operation == 'publish_existing_internal'
         uses: actions/checkout@v7
         with:
-          ref: main
+          ref: ${{ github.ref }}
           path: source
           persist-credentials: false
 
