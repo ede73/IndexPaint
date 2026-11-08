@@ -151,7 +151,12 @@ val verifyReleaseSigning = tasks.register("verifyReleaseSigning") {
 }
 
 tasks.configureEach {
-    if (name == "bundleRelease" || name == "publishReleaseBundle") dependsOn(verifyReleaseSigning)
+    if (name == "bundleRelease" || name == "publishReleaseBundle") {
+        dependsOn(verifyReleaseSigning)
+    }
+    if (name == "publishReleaseBundle") {
+        dependsOn("verifyReleaseBundleSignature")
+    }
 }
 
 tasks.register("verifyReleaseBundleSignature") {
