@@ -65,9 +65,11 @@ The service-account JSON is the only additional Play publishing secret. The work
 
 The manually triggered [`Android Mac mini build`](.github/workflows/android-mac-mini.yml) workflow runs on a self-hosted Mac runner. GitHub supplies the repository's signing secrets to the job; the runner decodes the upload keystore into a temporary file, signs the AAB locally, uploads the AAB as a seven-day workflow artifact, then removes the keystore and checked-out workspace. The runner uses the job-provided signing secrets and does not depend on a macOS credential store. It only handles manually dispatched jobs; publishing requires explicitly enabling the `publish_internal` input.
 
-The helper writes one **repository** Actions secret for signing IndexPaint:
+The helper writes these three **repository** Actions secrets for signing IndexPaint:
 
-- `INDEXPAINT_SIGNING_BUNDLE`: the CI-only keystore copy, two fresh random passwords, the key alias, and keystore type in one bundle. The helper below generates it; you do not need to know or store the passwords.
+- `INDEXPAINT_UPLOAD_KEYSTORE_BASE64`: the CI-only copy of the upload keystore, encoded as base64.
+- `INDEXPAINT_KEYSTORE_PASSWORD`: a fresh random password for the CI keystore copy.
+- `INDEXPAINT_KEY_PASSWORD`: a separate fresh random password for its private-key entry.
 - `ANDROID_PUBLISHER_CREDENTIALS`: the Google Play service-account JSON, only needed if you choose `publish_internal`.
 
 To create and upload the CI-only keystore copy and its passwords, run this from the project checkout after `gh` is authenticated:
@@ -76,7 +78,7 @@ To create and upload the CI-only keystore copy and its passwords, run this from 
 ./scripts/update-github-signing-secrets.sh [path/to/original-upload.jks]
 ```
 
-The path is optional; without it, the script asks for the file and retries if it cannot find it. It checks `gh auth status`, all required commands, and repository secret access before asking for the keystore passwords. It then uses `keytool` to make a temporary copy with two independent random shell-safe passwords. Before the confirmation prompt, it reopens the copy with the new passwords and verifies that the alias and signing certificate match the source. It writes one `INDEXPAINT_SIGNING_BUNDLE` secret, keeping the keystore and passwords in the same generation so a partial multi-secret update cannot leave mismatched values. If GitHub does not confirm the write, rerun the helper from the unchanged local keystore before building. The new passwords are not displayed or written to a file by the script; they are held briefly in process memory. Temporary cleanup is checked and a remaining temporary-directory path is reported if removal fails. The original keystore is left untouched. Keep signing bundles specific to each repository.
+The path is optional; without it, the script asks for the file and retries if it cannot find it. It checks `gh auth status`, required commands, and access to repository secrets and variables before asking for the keystore passwords. It uses `keytool` to make a temporary copy with two independent random shell-safe passwords, then verifies the copy's new passwords and matching signing certificate before confirmation. It sets three separate GitHub Actions secrets for the copied JKS, store password, and private-key password, plus repository variables for the alias and keystore type. During the writes it sets `INDEXPAINT_SIGNING_UPDATE_IN_PROGRESS=true`, which pauses workflow jobs. It clears that variable only after all values are set. If a write fails, the pause remains active; rerun the helper from the unchanged local JKS to replace all three secrets and complete the update. On success, it removes the obsolete single secret left by an earlier helper version. The new passwords are not displayed or written to a file by the script; they are held briefly in process memory. Temporary cleanup is checked and a remaining temporary-directory path is reported if removal fails. The original keystore is left untouched. Keep GitHub Actions secrets specific to each repository.
 
 The workflow exposes the Play credential only to the publish step.
 

@@ -44,11 +44,20 @@ if [[ ! "$prefix" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
   echo "Secret prefix must use uppercase letters, digits, and underscores." >&2
   exit 2
 fi
-secret_bundle="${prefix}_SIGNING_BUNDLE"
 if ! gh secret list --repo "$repo" >/dev/null; then
   echo "Could not access Actions secrets for $repo; verify repository permissions before entering keystore passwords." >&2
   exit 1
 fi
+if ! gh variable list --repo "$repo" >/dev/null; then
+  echo "Could not access Actions variables for $repo; verify repository permissions before entering keystore passwords." >&2
+  exit 1
+fi
+secret_keystore="${prefix}_UPLOAD_KEYSTORE_BASE64"
+secret_store_password="${prefix}_KEYSTORE_PASSWORD"
+secret_key_password="${prefix}_KEY_PASSWORD"
+variable_alias="${prefix}_KEY_ALIAS"
+variable_type="${prefix}_KEYSTORE_TYPE"
+rotation_lock="${prefix}_SIGNING_UPDATE_IN_PROGRESS"
 
 if [[ -z "$keystore_arg" ]]; then
   while :; do
@@ -74,7 +83,7 @@ chmod 700 "$tmp"
 cleanup() {
   local exit_status=$?
   trap - EXIT HUP INT TERM
-  unset old_store_password old_key_password new_store_password new_key_password keystore_b64 bundle
+  unset old_store_password old_key_password new_store_password new_key_password keystore_b64
   if ! rm -rf -- "$tmp"; then
     echo "WARNING: Could not remove temporary directory: $tmp" >&2
     exit_status=1
@@ -236,8 +245,6 @@ if (( ${#keystore_b64} > 48000 )); then
   exit 1
 fi
 
-# One secret update keeps the JKS and its two passwords in the same generation.
-bundle="$(printf '%s\n%s\n%s\n%s\n%s' "$keystore_b64" "$new_store_password" "$new_key_password" "$alias" "$keystore_type")"
 cat <<EOF
 
 Plan for $repo:
@@ -245,11 +252,17 @@ Plan for $repo:
   Re-encrypt a temporary copy for alias: $alias
   Signing certificate SHA-1: $source_fingerprint
   Validate the copy's new store password, key password, and matching certificate fingerprint
-  Replace the single repository secret: $secret_bundle
+  Set GitHub Actions secret: $secret_keystore
+  Set GitHub Actions secret: $secret_store_password
+  Set GitHub Actions secret: $secret_key_password
+  Set repository variable:  $variable_alias
+  Set repository variable:  $variable_type
+  Pause builds during the update with: $rotation_lock
+  Remove any old combined signing secret created by the earlier script
 
 The source keystore will remain unchanged. The new passwords will not be printed
-or written to a file by this script; they are held briefly in process memory and
-sent to GitHub in one signing bundle. Continue? [y/N]
+or written to a file by this script; they are held briefly in process memory.
+Continue? [y/N]
 EOF
 IFS= read -r confirmation
 if [[ "$confirmation" != "y" && "$confirmation" != "Y" ]]; then
@@ -257,13 +270,44 @@ if [[ "$confirmation" != "y" && "$confirmation" != "Y" ]]; then
   exit 0
 fi
 
-echo "Writing repository secret $secret_bundle..."
-if ! printf '%s' "$bundle" | gh secret set "$secret_bundle" --repo "$repo"; then
-  echo "GitHub did not confirm the bundle update. Do not build yet; rerun this script from the unchanged source keystore." >&2
+if ! gh variable set "$rotation_lock" --repo "$repo" --body true; then
+  echo "Could not pause the workflow; no signing secrets were changed." >&2
   exit 1
 fi
+set_secret() {
+  local name="$1"
+  local value="$2"
+  echo "Setting GitHub Actions secret $name..."
+  if ! printf '%s' "$value" | gh secret set "$name" --repo "$repo"; then
+    echo "Partial signing-secret update: $rotation_lock remains true, so builds are paused. Rerun this script from the unchanged local JKS to replace all three secrets and finish the update." >&2
+    return 1
+  fi
+}
+if ! set_secret "$secret_keystore" "$keystore_b64"; then exit 1; fi
+if ! set_secret "$secret_store_password" "$new_store_password"; then exit 1; fi
+if ! set_secret "$secret_key_password" "$new_key_password"; then exit 1; fi
+if ! gh variable set "$variable_alias" --repo "$repo" --body "$alias"; then
+  echo "Signing secrets are set but signing alias configuration failed. Builds remain paused; rerun this script to finish." >&2
+  exit 1
+fi
+if ! gh variable set "$variable_type" --repo "$repo" --body "$keystore_type"; then
+  echo "Signing secrets are set but keystore type configuration failed. Builds remain paused; rerun this script to finish." >&2
+  exit 1
+fi
+
+# Remove obsolete combined-secret names from earlier iterations, if present.
+for old_secret in "${prefix}_SIGNING_BUNDLE" "${prefix}_SIGNING_SECRET"; do
+  if gh secret delete "$old_secret" --repo "$repo" >/dev/null 2>&1; then
+    echo "Removed obsolete GitHub Actions secret $old_secret."
+  fi
+done
+
 if [[ "$(shasum -a 256 "$keystore" | awk '{print $1}')" != "$source_hash" ]]; then
-  echo "ERROR: source keystore hash changed during the update." >&2
+  echo "ERROR: source keystore hash changed during the update. Builds remain paused; rerun after checking the source JKS." >&2
   exit 1
 fi
-echo "GitHub signing bundle updated. Original local keystore is unchanged."
+if ! gh variable set "$rotation_lock" --repo "$repo" --body false; then
+  echo "All signing values are set, but builds remain paused. Rerun this script to clear $rotation_lock." >&2
+  exit 1
+fi
+echo "GitHub Actions signing secrets updated: $secret_keystore, $secret_store_password, and $secret_key_password. Original local keystore is unchanged."
