@@ -41,7 +41,7 @@ jobs:
 
   runner-signing-smoke:
     # Temporary pre-merge test. Removed after the Mac runner/policy check.
-    if: github.actor == 'ede73' && github.event_name == 'pull_request'
+    if: github.actor == 'ede73' && github.triggering_actor == 'ede73' && github.event_name == 'pull_request'
     runs-on: [self-hosted, macOS, indexpaint-release]
     timeout-minutes: 20
     steps:
