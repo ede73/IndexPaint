@@ -162,7 +162,7 @@ certificate_fingerprint() {
 log_user 1
 spawn keytool -list -v -alias $env(KEY_ALIAS) -keystore $env(KEYSTORE_PATH) -storetype $env(KEYSTORE_TYPE)
 expect {
-  -re {Enter keystore password:} { send -- "$env(KEYSTORE_PASSWORD)\\r" }
+  -re {Enter keystore password:} { send -- "$env(KEYSTORE_PASSWORD)\r" }
   timeout { exit 1 }
   eof { exit 1 }
 }
@@ -183,12 +183,12 @@ verify_private_key_password() {
 log_user 0
 spawn keytool -certreq -alias $env(KEY_ALIAS) -keystore $env(KEYSTORE_COPY) -storetype $env(KEYSTORE_TYPE) -file $env(CSR_PATH)
 expect {
-  -re {Enter keystore password:} { send -- "$env(KEYSTORE_PASSWORD)\\r" }
+  -re {Enter keystore password:} { send -- "$env(KEYSTORE_PASSWORD)\r" }
   timeout { exit 1 }
   eof { exit 1 }
 }
 expect {
-  -re {Enter key password.*:} { send -- "$env(KEY_PASSWORD)\\r" }
+  -re {Enter key password.*:} { send -- "$env(KEY_PASSWORD)\r" }
   timeout { exit 1 }
   eof { exit 1 }
 }
