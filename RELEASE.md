@@ -1,5 +1,39 @@
 # IndexPaint build and release guide
 
+## Publish a source to Internal testing
+
+Each command below starts one Mac runner job that builds, signs, verifies, uploads, and commits the AAB to the Internal testing track. No separate build and publish commands or run ID are needed. The workflow ref (`--ref`) selects the workflow version; `source_ref` selects the app code to publish. After PR #5 is merged, use `--ref main` as shown. While it is still open, use `--ref codex/release-lint-fix`.
+
+Publish whatever `main` points to when the runner checks it out:
+
+```sh
+gh workflow run android-release.yml --repo ede73/IndexPaint --ref main -f operation=build_and_publish_internal -f source_ref=main
+```
+
+Pin the run to the exact `origin/main` commit resolved by GitHub when you issue the command:
+
+```sh
+gh workflow run android-release.yml --repo ede73/IndexPaint --ref main -f operation=build_and_publish_internal -f source_ref="$(gh api repos/ede73/IndexPaint/git/ref/heads/main --jq .object.sha)"
+```
+
+Publish the head of a pull request, including a draft PR (this example uses PR #5):
+
+```sh
+gh workflow run android-release.yml --repo ede73/IndexPaint --ref main -f operation=build_and_publish_internal -f source_ref=refs/pull/5/head
+```
+
+Publish a branch (this example uses the tested release branch):
+
+```sh
+gh workflow run android-release.yml --repo ede73/IndexPaint --ref main -f operation=build_and_publish_internal -f source_ref=codex/release-lint-fix
+```
+
+To publish an exact commit, put its full or abbreviated Git SHA after `source_ref=`. The run records the resolved source commit and AAB SHA-256 in its artifact provenance.
+
+If you prefer the GitHub website, open **Actions → Android Release → Run workflow**, choose `main` as the workflow branch, choose `build_and_publish_internal`, and enter the source ref (`main`, a commit SHA, branch, or `refs/pull/NUMBER/head`). Then click **Run workflow**. This one run builds and publishes to Internal testing.
+
+The rest of this guide covers build-only runs, publishing an already-built AAB, and setup details.
+
 ## What runs automatically
 
 Pull requests, including draft pull requests, run **Android CI** on GitHub-hosted Ubuntu. It builds the unsigned debug app and runs unit and Android emulator tests. It does not sign an AAB or publish to Google Play.
@@ -19,7 +53,7 @@ The first three operations take `source_ref`: a branch, tag, commit SHA, or pull
 
 For a new build, Gradle Play Publisher gets the next version code from Google Play. For `publish_existing_internal`, the AAB keeps the version code it was built with. The workflow verifies the AAB checksum and signing certificate before upload. Successful publishing commits a completed release to the Internal testing track; it does not create a Play draft or publish to Production.
 
-## Run it from the command line
+## Other command-line operations
 
 First check that GitHub CLI is authenticated as `ede73`:
 
@@ -27,7 +61,7 @@ First check that GitHub CLI is authenticated as `ede73`:
 gh auth status
 ```
 
-Set `WORKFLOW_REF` to a branch that contains the Android Release workflow. After these workflow changes are merged, use `main`. Until then, use `codex/release-lint-fix`. `SOURCE_REF` is the app source to build and can be different from `WORKFLOW_REF`.
+For these operations, use `--ref main` after the workflow changes are merged. Until then, use `--ref codex/release-lint-fix`. `source_ref` is the app source and can be different from the workflow ref.
 
 ```sh
 REPO=ede73/IndexPaint
@@ -52,7 +86,7 @@ gh workflow run android-release.yml --repo "$REPO" --ref "$WORKFLOW_REF" \
   -f source_ref="$SOURCE_REF"
 ```
 
-Publish an AAB from an earlier successful `build_signed` run without rebuilding it. Replace `RUN_ID` with that run's numeric GitHub Actions run ID. `source_ref` is required by the form but ignored for this operation.
+Publish an AAB from an earlier successful `build_signed` run without rebuilding it. Copy that run's numeric ID from the Actions run page or the `gh run list` output. `source_ref` is required by the form but ignored for this operation.
 
 ```sh
 gh workflow run android-release.yml --repo "$REPO" --ref "$WORKFLOW_REF" \
