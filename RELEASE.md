@@ -1,94 +1,117 @@
-# Builds and releases
+# IndexPaint build and release guide
 
-IndexPaint has two separate workflows. Pull requests get an unsigned GitHub hosted smoke build. Signed builds and Play uploads are manually started from the private `ede73/internal-testing-only` repository, whose Mac mini runner and release secrets are not available to this public repository.
+## What runs automatically
 
-## Pull request CI
+Pull requests, including draft pull requests, run **Android CI** on GitHub-hosted Ubuntu. It builds the unsigned debug app and runs unit and Android emulator tests. It does not sign an AAB or publish to Google Play.
 
-Every pull request, including drafts, runs `.github/workflows/android-pr-ci.yml` on a GitHub hosted Ubuntu runner. It builds the unsigned debug app, runs unit tests, and runs instrumentation tests on an Android emulator. It has no signing secrets and cannot schedule the Mac mini. Android lint can be added after the current lint errors are addressed.
+Signed builds and Internal testing uploads use the manually started **Android Release** workflow on the Mac mini runner. It has no push or pull-request trigger. Its release job checks that both the workflow actor and the person who started or reran it are `ede73`.
 
-## Signed build and Internal testing operations
+## Choose an operation
 
-Open **Actions → IndexPaint signed release** in the private [internal-testing-only repository](https://github.com/ede73/internal-testing-only), select `main`, and choose one operation:
+| Operation | Result |
+| --- | --- |
+| `verify_signing_inputs` | Checks the configured upload keystore and signing certificate. |
+| `build_signed` | Builds and verifies a signed AAB, then saves it as the `indexpaint-release-aab` workflow artifact. Does not upload to Play. |
+| `build_and_publish_internal` | Builds and verifies a signed AAB, then uploads and commits that AAB to the Google Play **Internal testing** track. |
+| `publish_existing_internal` | Uploads an AAB from an earlier workflow run and commits it to Internal testing. Does not rebuild it. Requires that run's ID. |
 
-- `build_signed`: build and verify a signed AAB, then keep it as a downloadable workflow artifact.
-- `build_and_publish_internal`: build a new signed AAB and publish it to the Internal testing track.
-- `publish_existing_internal`: publish the exact AAB from a previous workflow run without rebuilding it. Supply its run ID, repository, and matching source ref.
+The first three operations take `source_ref`: a branch, tag, commit SHA, or pull request head such as `refs/pull/12/head`. This lets you test a branch or draft PR before merging. For `publish_existing_internal`, `source_ref` is still a required workflow input but is ignored; the selected workflow revision supplies the publishing scripts, and `artifact_run_id` identifies the AAB.
 
-Set `source_ref` to `main`, a branch or tag, a commit SHA, or `refs/pull/NUMBER/head` to build a draft or open PR. The workflow records the resolved source SHA and the AAB SHA-256 beside the AAB. Artifacts are retained for 90 days.
+For a new build, Gradle Play Publisher gets the next version code from Google Play. For `publish_existing_internal`, the AAB keeps the version code it was built with. The workflow verifies the AAB checksum and signing certificate before upload. Successful publishing commits a completed release to the Internal testing track; it does not create a Play draft or publish to Production.
 
-Only `ede73` can run the private release workflow. It has no automatic triggers. PRs, pushes, merges, and normal CI never start signed builds or Play uploads.
+## Run it from the command line
 
-### Start operations with `gh`
+First check that GitHub CLI is authenticated as `ede73`:
 
 ```sh
-# Signed AAB from current main
-gh workflow run indexpaint-release.yml --repo ede73/internal-testing-only --ref main \
-  -f operation=build_signed -f source_ref=main
+gh auth status
+```
 
-# Signed AAB from draft PR 12
-gh workflow run indexpaint-release.yml --repo ede73/internal-testing-only --ref main \
-  -f operation=build_signed -f source_ref=refs/pull/12/head
+Set `WORKFLOW_REF` to a branch that contains the Android Release workflow. After these workflow changes are merged, use `main`. Until then, use `codex/release-lint-fix`. `SOURCE_REF` is the app source to build and can be different from `WORKFLOW_REF`.
 
-# Build and publish that PR to Internal testing
-gh workflow run indexpaint-release.yml --repo ede73/internal-testing-only --ref main \
-  -f operation=build_and_publish_internal -f source_ref=refs/pull/12/head
+```sh
+REPO=ede73/IndexPaint
+WORKFLOW_REF=main
+SOURCE_REF=main
+```
 
-# Publish a previously built AAB without rebuilding; use its controller run ID
-gh workflow run indexpaint-release.yml --repo ede73/internal-testing-only --ref main \
-  -f operation=publish_existing_internal -f source_ref=refs/pull/12/head \
+Build and verify a signed AAB without publishing it:
+
+```sh
+gh workflow run android-release.yml --repo "$REPO" --ref "$WORKFLOW_REF" \
+  -f operation=build_signed \
+  -f source_ref="$SOURCE_REF"
+```
+
+Build and publish a branch or pull request to Internal testing:
+
+```sh
+SOURCE_REF=refs/pull/12/head
+gh workflow run android-release.yml --repo "$REPO" --ref "$WORKFLOW_REF" \
+  -f operation=build_and_publish_internal \
+  -f source_ref="$SOURCE_REF"
+```
+
+Publish an AAB from an earlier successful `build_signed` run without rebuilding it. Replace `RUN_ID` with that run's numeric GitHub Actions run ID. `source_ref` is required by the form but ignored for this operation.
+
+```sh
+gh workflow run android-release.yml --repo "$REPO" --ref "$WORKFLOW_REF" \
+  -f operation=publish_existing_internal \
+  -f source_ref=main \
   -f artifact_run_id=RUN_ID
-
-# Publish an artifact from an old run in the public IndexPaint repository
-gh workflow run indexpaint-release.yml --repo ede73/internal-testing-only --ref main -f operation=publish_existing_internal -f source_ref=SOURCE_SHA -f artifact_repository=ede73/IndexPaint -f artifact_run_id=RUN_ID
 ```
 
-Check or download the retained artifact:
+To check the run and download its AAB artifact:
 
 ```sh
-gh run list --repo ede73/internal-testing-only --workflow indexpaint-release.yml --limit 10
-gh run watch RUN_ID --repo ede73/internal-testing-only
-gh run download RUN_ID --repo ede73/internal-testing-only --name indexpaint-release-aab
+gh run list --repo "$REPO" --workflow android-release.yml --limit 10
+gh run watch RUN_ID --repo "$REPO" --exit-status
+gh run view RUN_ID --repo "$REPO"
+gh run download RUN_ID --repo "$REPO" --name indexpaint-release-aab
 ```
 
-For an artifact from the old public workflow, inspect its exact source commit with `gh run view RUN_ID --repo ede73/IndexPaint --json headSha,headBranch`, then use that SHA as `source_ref`. Set `artifact_repository=ede73/IndexPaint` and use the old run ID. The private controller needs a fine-grained GitHub token with **Actions: read** access to `ede73/IndexPaint` to download artifacts from that other repository. Private-controller artifacts do not need this token.
+Each AAB artifact includes `app-release.aab`, its SHA-256 file, and `provenance.txt` with the build run ID, source ref, resolved source commit, and operation. GitHub retains the artifact for 90 days.
 
-`publish_existing_internal` rejects an artifact unless its recorded provenance or source run metadata matches the selected source SHA. It checks the AAB signature against the upload keystore and uses the version code inside that AAB. A new signed build asks Gradle Play Publisher for the next version code from Google Play, so it needs the Play credential even when that build is not published yet.
+## Run it on GitHub
 
-## One time setup
+1. Open the IndexPaint repository and choose **Actions → Android Release**.
+2. Choose **Run workflow**.
+3. Select the workflow branch in the branch dropdown. Use `main` after the workflow changes are merged; until then select `codex/release-lint-fix`.
+4. Select the operation.
+5. For `verify_signing_inputs`, no source is built. For `build_signed` or `build_and_publish_internal`, enter the source branch, tag, commit SHA, or PR head ref in `source_ref`. For example, use `main` or `refs/pull/12/head`.
+6. For `publish_existing_internal`, enter the earlier build's run ID in `artifact_run_id`; `source_ref` remains required by the form and can be `main`.
+7. Click **Run workflow**, open the new run, and wait for it to finish. A publish is complete only when the **Publish ... to Internal testing** step succeeds and the run is successful.
 
-The Mac mini runner is registered only to the private `internal-testing-only` repository. IndexPaint's public repo has no self-hosted runner. Public PR CI runs on GitHub hosted machines.
+Draft PRs are selectable in the same way as regular PRs. Starting the workflow manually does not merge the PR. Only `build_and_publish_internal` or `publish_existing_internal` uploads to Play; `build_signed` only creates a downloadable artifact.
 
-Set the three signing secrets in the private controller repository from the unchanged local upload keystore:
+## Required repository configuration
 
-```sh
-./scripts/update-github-signing-secrets.sh --repo ede73/internal-testing-only [path/to/original-upload.jks]
-```
-
-The script sets these repository Actions secrets:
+The public `ede73/IndexPaint` repository uses these Actions secrets:
 
 - `INDEXPAINT_UPLOAD_KEYSTORE_BASE64`
 - `INDEXPAINT_KEYSTORE_PASSWORD`
 - `INDEXPAINT_KEY_PASSWORD`
+- `ANDROID_PUBLISHER_CREDENTIALS`
 
-It also sets the `INDEXPAINT_KEY_ALIAS` and `INDEXPAINT_KEYSTORE_TYPE` repository variables. It re-encrypts a temporary copy of the local JKS, verifies the copy and certificate, and leaves the source keystore unchanged.
+It also uses these repository variables:
 
-Publishing also needs the `ANDROID_PUBLISHER_CREDENTIALS` repository secret in `internal-testing-only`. It contains the Google Play service-account JSON. The service account should have access to release IndexPaint to testing tracks, without Production release or account administration permissions. Add it with:
+- `INDEXPAINT_KEY_ALIAS`
+- `INDEXPAINT_KEYSTORE_TYPE`
 
-```sh
-gh secret set ANDROID_PUBLISHER_CREDENTIALS --repo ede73/internal-testing-only < /path/to/service-account.json
-```
-
-To publish an AAB from an old public-repository run, create a fine-grained token with **Actions: read** on `ede73/IndexPaint`, then add it as `INDEXPAINT_ARTIFACT_READ_TOKEN` in the private controller:
+From the repository root, the signing-secrets helper prepares and verifies an encrypted copy of the local keystore, then sets the three signing secrets and two variables. It leaves the original keystore unchanged. Pass the JKS path as the final argument, or omit it and the script will prompt for the path:
 
 ```sh
-gh secret set INDEXPAINT_ARTIFACT_READ_TOKEN --repo ede73/internal-testing-only
+./scripts/update-github-signing-secrets.sh --repo ede73/IndexPaint /path/to/original-upload.jks
 ```
 
-See Google's [API setup guide](https://developers.google.com/android-publisher/getting_started) and [Play Console permission reference](https://support.google.com/googleplay/android-developer/answer/9844686?hl=en).
+Set the Play service-account JSON secret separately. The file path is local to your computer; the JSON contents are sent to GitHub as an Actions secret and are not printed by this command:
 
-## What this workflow does not do
+```sh
+gh secret set ANDROID_PUBLISHER_CREDENTIALS --repo ede73/IndexPaint < /path/to/service-account.json
+```
 
-- It never publishes to Production.
-- It does not automatically build or publish on any Git event.
-- A workflow artifact is available for 90 days; keep a separate copy if you need longer-term AAB storage.
-- A Play upload to the `internal` track is completed for testers. This workflow does not create a Play draft release or promote an Internal release to Production.
+The service account must be invited in Play Console and granted the app-level **Release apps to testing tracks** permission for IndexPaint. The publisher credential is also needed during `build_signed`: Gradle queries Play for the next version code even though that operation does not publish.
+
+## Result of the final test build
+
+Run [42526525306](https://github.com/ede73/IndexPaint/actions/runs/42526525306) built and signed source commit `1ba1dbbcd562e4d98052ccfaa94eb87aa3b57b09`, then uploaded and committed version code **8** to Internal testing. Its AAB SHA-256 is `1dbcd0701e2ba3afc3dfa7e88cb3494687c21523fee2757d6b4176a26a3036a3`.
