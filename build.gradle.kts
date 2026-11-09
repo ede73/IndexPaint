@@ -21,3 +21,9 @@ tasks.register("publishInternal") {
     description = "Builds, verifies, and publishes the signed release bundle to Google Play Internal testing."
     dependsOn(":app:publishReleaseBundle")
 }
+
+tasks.configureEach {
+    if (name.startsWith("commitEditFor")) {
+        finalizedBy(":app:removeLocalPlayPublisherCredential")
+    }
+}
