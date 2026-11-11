@@ -32,7 +32,7 @@ jobs:
       - name: Run unit tests, instrumentation tests, and unsigned debug build
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 36
+          api-level: 35
           arch: x86_64
           target: google_apis
           script: ./gradlew --no-daemon testDebugUnitTest connectedDebugAndroidTest assembleDebug
