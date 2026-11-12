@@ -442,14 +442,14 @@ class PaintApp : Application() {
             foldLayers[foldIndex] = checkNotNull(view).snapshotDrawingLayer()
             foldTurnEnded = true
             view?.beginHandoffMetadata()
-            toast("Add notes with your finger or Text. Yield sends them; they stay off the final picture.")
+            toast("Add a note with your finger or Text, then tap Done to pass the turn. Notes stay off the final picture.")
             (currentActivity as? IndexPaint)?.onFoldSessionChanged()
             updateFoldAccessibility()
             return
         }
         val drawingView = view ?: return
         if (!drawingView.hasPendingHandoffMarks()) {
-            toast("Add a note with your finger or Text before Yield")
+            toast("Add a note with your finger or Text before tapping Done")
             return
         }
         val layer = foldLayers[foldIndex] ?: localBitmap.copy(Bitmap.Config.ARGB_8888, true)
@@ -781,9 +781,8 @@ class PaintApp : Application() {
         val metadataVisible = if (view?.hasLastHandoffMetadata() == true) " Handoff metadata is visible." else ""
         canvasView.contentDescription = when {
             !isLocalFoldTurn() -> "Index Paint canvas. Waiting for ${peerDisplayName()}. Turn ${foldIndex + 1}.$metadataVisible"
-            foldTurnEnded -> "Index Paint canvas. Add handoff notes with your finger or Text, then Yield to pass the turn, or End session to reveal the whole drawing. ${view?.pendingHandoffMarkCount() ?: 0} notes added.$metadataVisible"
-            foldBoundary >= 1f -> "Index Paint canvas. Your turn to draw. Turn ${foldIndex + 1}. End session to reveal the whole drawing.$metadataVisible"
-            else -> "Index Paint canvas. Your turn to draw. Turn ${foldIndex + 1}. Press End turn to add handoff metadata, or End session to reveal the whole drawing.$metadataVisible"
+            foldTurnEnded -> "Index Paint canvas. Add a handoff note with your finger or Text, then tap Done to pass the turn. ${view?.pendingHandoffMarkCount() ?: 0} notes added.$metadataVisible"
+            else -> "Index Paint canvas. Your turn to draw. Turn ${foldIndex + 1}. Tap End Turn to add a note for your partner and pass, or finish and reveal the drawing.$metadataVisible"
         }
     }
 

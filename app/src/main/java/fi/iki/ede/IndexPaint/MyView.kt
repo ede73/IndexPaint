@@ -265,13 +265,13 @@ class MyView(private val app: PaintApp) : View(app) {
         turnStatusSubtitlePaint.textSize = 12f * density
         val title = when {
             !localTurn -> "WAITING FOR PEER"
-            app.foldTurnEnded -> "HANDOFF METADATA"
+            app.foldTurnEnded -> "ADD A HANDOFF NOTE"
             else -> "YOUR TURN"
         }
         val subtitle = when {
             !localTurn -> "Turn ${app.foldIndex + 1} · ${app.peerDisplayName()} is drawing"
-            app.foldTurnEnded -> "Draw or tap Text · Yield sends notes"
-            else -> "Turn ${app.foldIndex + 1} · End turn when ready"
+            app.foldTurnEnded -> "Draw or tap Text · Done passes the turn"
+            else -> "Turn ${app.foldIndex + 1} · End Turn to choose what happens next"
         }
         canvas.drawText(title, left + 12f * density, top + 23f * density, turnStatusTextPaint)
         canvas.drawText(subtitle, left + 12f * density, top + 43f * density, turnStatusSubtitlePaint)

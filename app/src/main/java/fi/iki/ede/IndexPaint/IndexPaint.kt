@@ -51,8 +51,9 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
     private var foldRow: LinearLayout? = null
     private var foldProgressLabel: TextView? = null
     private var foldProgressSlider: SeekBar? = null
-    private var yieldButton: Button? = null
-    private var endSessionButton: Button? = null
+    private var endTurnButton: Button? = null
+    private var foldActionRow: LinearLayout? = null
+    private var handoffDoneButton: Button? = null
     private var drawingToolbar: LinearLayout? = null
     private var sideToolbar = false
     private var toolbarBottomInset = 0
@@ -176,6 +177,7 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
     private fun installCanvasUi(canvas: MyView) {
         val draw = canvas.localDraw
         (canvas.parent as? ViewGroup)?.removeView(canvas)
+        foldActionRow = null
         sideToolbar = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE &&
             resources.configuration.smallestScreenWidthDp >= TABLET_MIN_WIDTH_DP &&
             resources.configuration.screenWidthDp >= TABLET_LANDSCAPE_WIDTH_DP
@@ -301,16 +303,14 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
             })
         }
         foldControls.addView(foldProgressSlider, LinearLayout.LayoutParams(if (sideToolbar || compactToolbar) ViewGroup.LayoutParams.MATCH_PARENT else 0, dp(44), if (sideToolbar || compactToolbar) 0f else 1f))
-        yieldButton = toolButton("End turn", "End your drawing turn and add handoff metadata") { app.endTurnOrYield() }
-        endSessionButton = toolButton("End session", "End the session and reveal the whole drawing") { confirmFoldFinish() }
+        endTurnButton = toolButton("End Turn", "Choose whether to add a handoff note or finish and reveal the drawing") { showFoldTurnEndChoice() }
         if (sideToolbar || compactToolbar) {
             val foldActions = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-            foldActions.addView(yieldButton, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginEnd = dp(6) })
-            foldActions.addView(endSessionButton, LinearLayout.LayoutParams(0, dp(48), 1f))
+            foldActionRow = foldActions
+            foldActions.addView(endTurnButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
             foldControls.addView(foldActions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
         } else {
-            foldControls.addView(yieldButton, LinearLayout.LayoutParams(dp(78), dp(44)).apply { marginStart = dp(4) })
-            foldControls.addView(endSessionButton, LinearLayout.LayoutParams(dp(102), dp(44)).apply { marginStart = dp(4) })
+            foldControls.addView(endTurnButton, LinearLayout.LayoutParams(dp(102), dp(44)).apply { marginStart = dp(4) })
         }
         toolbar.addView(foldControls, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -326,7 +326,14 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
                 addView(toolbar, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             }
             content.addView(scroll, LinearLayout.LayoutParams(dp(TABLET_TOOLBAR_WIDTH_DP), ViewGroup.LayoutParams.MATCH_PARENT))
-            content.addView(canvas, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+            val canvasFrame = FrameLayout(this)
+            canvasFrame.addView(canvas, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            handoffDoneButton = createHandoffDoneButton()
+            canvasFrame.addView(handoffDoneButton, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(52), Gravity.BOTTOM or Gravity.END).apply {
+                marginEnd = dp(24)
+                bottomMargin = dp(24)
+            })
+            content.addView(canvasFrame, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
             ViewCompat.setOnApplyWindowInsetsListener(content) { _, insets ->
                 canvas.setBottomControlsHeight(0)
                 insets
@@ -338,13 +345,20 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
             }
             root.addView(canvas, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             root.addView(toolbar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+            handoffDoneButton = createHandoffDoneButton()
+            root.addView(handoffDoneButton, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(52), Gravity.BOTTOM or Gravity.END).apply {
+                marginEnd = dp(20)
+                bottomMargin = dp(24)
+            })
             toolbar.addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
                 updateCanvasBottomControlsHeight(view)
+                updateHandoffDoneButtonPosition(view)
             }
             ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
                 toolbarBottomInset = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
                 (toolbar.layoutParams as FrameLayout.LayoutParams).apply { bottomMargin = toolbarBottomInset }
                 updateCanvasBottomControlsHeight(toolbar)
+                updateHandoffDoneButtonPosition(toolbar)
                 insets
             }
             setContentView(root)
@@ -380,13 +394,43 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
         invalidateOptionsMenu()
     }
 
-    private fun confirmFoldFinish() {
+    private fun showFoldTurnEndChoice() {
+        val peer = app.peerDisplayName().takeUnless { it.isBlank() || it.equals("peer", ignoreCase = true) } ?: "your partner"
+        val canPass = app.foldProgressPercent() < 100
+        val choices = if (canPass) {
+            arrayOf("Add a note for $peer, then pass the turn", "Finish the drawing and reveal it to both of you")
+        } else {
+            arrayOf("Finish the drawing and reveal it to both of you")
+        }
         AlertDialog.Builder(this)
-            .setTitle("End this session?")
-            .setMessage("The whole drawing will be revealed on both devices. There will be no more turns.")
+            .setTitle("End your turn")
+            .setMessage(if (canPass) "What would you like to do next?" else "This is the final fold. Reveal the finished drawing to both of you.")
+            .setItems(choices) { _, which ->
+                if (canPass && which == 0) app.endTurnOrYield()
+                else app.requestFoldFinish()
+            }
             .setNegativeButton("Keep drawing", null)
-            .setPositiveButton("End session") { _, _ -> app.requestFoldFinish() }
             .show()
+    }
+
+    private fun createHandoffDoneButton() = toolButton("Done", "Send your handoff note and pass the turn") {
+        app.endTurnOrYield()
+    }.apply {
+        textSize = 14f
+        minWidth = dp(112)
+        setPadding(dp(20), 0, dp(20), 0)
+        backgroundTintList = ColorStateList.valueOf(getColor(R.color.purple_500))
+        elevation = dp(8).toFloat()
+    }
+
+    private fun updateHandoffDoneButtonPosition(toolbar: View) {
+        if (sideToolbar) return
+        val params = handoffDoneButton?.layoutParams as? FrameLayout.LayoutParams ?: return
+        val bottomMargin = toolbar.height + toolbarBottomInset + dp(16)
+        if (params.bottomMargin != bottomMargin) {
+            params.bottomMargin = bottomMargin
+            handoffDoneButton?.layoutParams = params
+        }
     }
 
     private fun showTextEditor(canvas: MyView) {
@@ -463,22 +507,24 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
             text = "Fold position · ${app.foldProgressPercent()}%"
             contentDescription = "Fold position ${app.foldProgressPercent()} percent. Drag the fold line or this slider to adjust it"
         }
-        yieldButton?.apply {
-            val hasMetadata = app.view?.hasPendingHandoffMarks() == true
-            isEnabled = localTurn && (!app.foldTurnEnded || hasMetadata)
-            text = if (app.foldYieldPending) "Sending…" else if (!localTurn) "Wait" else if (app.foldTurnEnded) "Yield" else if (app.foldProgressPercent() == 100) "End session" else "End turn"
+        endTurnButton?.apply {
+            visibility = if (app.foldTurnEnded) View.GONE else View.VISIBLE
+            isEnabled = localTurn
+            text = if (!localTurn) "Wait" else "End Turn"
             contentDescription = when {
                 app.foldYieldPending -> "Sending the drawing and handoff notes; waiting for your partner to confirm receipt"
                 !localTurn -> "Waiting for ${app.peerDisplayName()}"
-                !app.foldTurnEnded -> "End your drawing turn to add handoff notes"
-                !hasMetadata -> "Draw a note with your finger or add Text before yielding"
-                else -> "Yield and send ${app.view?.pendingHandoffMarkCount() ?: 0} notes; they stay out of the final picture"
+                else -> "Choose whether to add a handoff note or finish and reveal the drawing"
             }
         }
-        endSessionButton?.apply {
+        handoffDoneButton?.apply {
+            visibility = if (active && app.foldTurnEnded && app.isLocalFoldTurn()) View.VISIBLE else View.GONE
             isEnabled = localTurn
-            contentDescription = if (app.foldFinishPending) "Ending the session" else "End the session now and reveal the whole drawing on both devices"
+            text = if (app.foldYieldPending) "Sending…" else "Done"
+            contentDescription = if (app.foldYieldPending) "Sending the drawing and handoff notes; waiting for your partner to confirm receipt"
+                else "Send ${app.view?.pendingHandoffMarkCount() ?: 0} handoff notes and pass the turn to ${app.peerDisplayName()}"
         }
+        foldActionRow?.visibility = if (app.foldTurnEnded) View.GONE else View.VISIBLE
     }
 
     fun showSessionModeChoice(peerName: String, localChoice: SessionMode?, peerChoice: SessionMode?) {
