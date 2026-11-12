@@ -23,6 +23,7 @@ class MyView(private val app: PaintApp) : View(app) {
     val localDraw = DrawDetails(remote = false, myView = this, paintApp = app)
     val remoteDraw = DrawDetails(remote = true, myView = this, paintApp = app)
 
+    private val backgroundPaint = Paint().apply { color = context.getColor(R.color.paint_workspace) }
     private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private data class Stroke(val path: Path, val paint: Paint, val handoff: Boolean, val eraser: Boolean)
     data class TextObject(
@@ -747,7 +748,6 @@ class MyView(private val app: PaintApp) : View(app) {
         private const val HINTS_PREFS = "indexpaint_display"
         private const val HANDOFF_HINTS_VISIBLE = "handoff_hints_visible"
         private const val MAX_UNDO_STROKES = 10
-        private val backgroundPaint = Paint().apply { color = 0xFFAAAAAA.toInt() }
         private val bitmapPaperPaint = Paint().apply { color = Color.WHITE }
         private val pageShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
         private val foldFlapPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFF1F3F2.toInt() }

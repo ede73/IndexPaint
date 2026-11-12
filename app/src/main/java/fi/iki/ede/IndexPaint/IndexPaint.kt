@@ -10,7 +10,8 @@ import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.drawable.Drawable
-import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -23,6 +24,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.EditText
@@ -52,6 +54,8 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
     private var yieldButton: Button? = null
     private var endSessionButton: Button? = null
     private var drawingToolbar: LinearLayout? = null
+    private var sideToolbar = false
+    private var toolbarBottomInset = 0
     private var connectionStatusItem: MenuItem? = null
     private var sessionModeDialog: AlertDialog? = null
     private var sessionModeStatus: TextView? = null
@@ -70,6 +74,11 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
     fun showConnectionStatus(status: String) {
         connectionStatusItem?.apply {
             icon = ConnectionStatusIcon(statusColor(status))
+            title = when {
+                status.startsWith("Connected") -> "Connected"
+                status == "Not connected" -> "Connect"
+                else -> "Connecting"
+            }
             contentDescription = status
         }
     }
@@ -106,8 +115,8 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.optmenu, menu)
-        connectionStatusItem = menu.add(Menu.NONE, MENU_CONNECTION_STATUS, Menu.NONE, "Connection status").apply {
-            setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+        connectionStatusItem = menu.add(Menu.NONE, MENU_CONNECTION_STATUS, Menu.NONE, "Connect").apply {
+            setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM or MenuItem.SHOW_AS_ACTION_WITH_TEXT)
             icon = ConnectionStatusIcon(statusColor(app.connectionStatus))
             contentDescription = app.connectionStatus
         }
@@ -167,27 +176,27 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
     private fun installCanvasUi(canvas: MyView) {
         val draw = canvas.localDraw
         (canvas.parent as? ViewGroup)?.removeView(canvas)
-        val root = FrameLayout(this)
-        root.addView(canvas, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        sideToolbar = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE &&
+            resources.configuration.smallestScreenWidthDp >= TABLET_MIN_WIDTH_DP &&
+            resources.configuration.screenWidthDp >= TABLET_LANDSCAPE_WIDTH_DP
 
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(8), dp(4), dp(8), dp(4))
-            background = ColorDrawable(0xFFF4F4F4.toInt())
-            elevation = dp(4).toFloat()
+            setPadding(dp(if (sideToolbar) 18 else 14), dp(12), dp(if (sideToolbar) 18 else 14), dp(12))
+            background = toolbarBackground()
+            elevation = dp(14).toFloat()
+            contentDescription = "Drawing tools"
         }
         drawingToolbar = toolbar
-        val actionRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-
-        undoButton = toolButton("↶", "Undo") { canvas.undo() }.also { addTool(actionRow, it, 34) }
-        redoButton = toolButton("↷", "Redo") { canvas.redo() }.also { addTool(actionRow, it, 34) }
+        val toolButtons = mutableListOf<Button>()
+        undoButton = toolButton("Undo", "Undo") { canvas.undo() }.also { toolButtons += it }
+        redoButton = toolButton("Redo", "Redo") { canvas.redo() }.also { toolButtons += it }
         colorButton = toolButton("●", "Choose color") {
             ColorPickerDialog(this, this, draw.getColor()).show()
         }.also {
-            it.textSize = 21f
-            it.backgroundTintList = ColorStateList.valueOf(0xFFE1E1E1.toInt())
+            it.text = "Color"
             updateColorButton(draw.getColor())
-            addTool(actionRow, it, 40)
+            toolButtons += it
         }
         brushButton = toolButton(brushLabel(draw.getBrushStyle()), "Change brush") {
             val styles = BrushStyle.values()
@@ -195,26 +204,59 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
             draw.setBrush(next)
             updateBrushButton(next)
             updateEraserButton(draw.isEraserEnabled())
-        }.also { addTool(actionRow, it, 50) }
+        }.also { toolButtons += it }
+        updateBrushButton(draw.getBrushStyle())
         embossButton = toolButton("Emboss", "Toggle emboss") {
             draw.toggleEmboss()
             updateEmbossButton(draw.isEmbossEnabled())
-        }.also { addTool(actionRow, it, 56) }
+        }.also { toolButtons += it }
         updateEmbossButton(draw.isEmbossEnabled())
-        eraserButton = toolButton("Erase", "Toggle eraser") {
+        eraserButton = toolButton("Eraser", "Toggle eraser") {
             draw.setEraser(!draw.isEraserEnabled())
             updateEraserButton(draw.isEraserEnabled())
-        }.also { addTool(actionRow, it, 48) }
+        }.also { toolButtons += it }
         updateEraserButton(draw.isEraserEnabled())
-        toolbar.addView(actionRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+        toolbar.addView(sectionLabel(if (sideToolbar) "TOOLS" else "DRAWING TOOLS"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(28)))
+        val actionRow = LinearLayout(this).apply {
+            orientation = if (sideToolbar) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        toolButtons.forEach { button ->
+            if (sideToolbar) {
+                actionRow.addView(button, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply {
+                    bottomMargin = dp(6)
+                })
+            } else {
+                actionRow.addView(button, LinearLayout.LayoutParams(0, dp(50), 1f).apply {
+                    marginStart = dp(2)
+                    marginEnd = dp(2)
+                })
+            }
+        }
+        toolbar.addView(actionRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, if (sideToolbar) ViewGroup.LayoutParams.WRAP_CONTENT else dp(54)))
 
-        val widthRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        widthRow.addView(toolButton("Text", "Add or edit movable text") { showTextEditor(canvas) }, LinearLayout.LayoutParams(dp(62), dp(40)))
-        widthLabel = TextView(this).apply { text = "Width ${draw.getDrawWidth().toInt()} px" }
-        widthRow.addView(widthLabel, LinearLayout.LayoutParams(dp(70), dp(40)))
+        val brushSection = LinearLayout(this).apply {
+            orientation = if (sideToolbar) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            if (sideToolbar) setPadding(0, dp(12), 0, dp(8)) else setPadding(0, dp(6), 0, 0)
+        }
+        if (sideToolbar) brushSection.addView(sectionLabel("BRUSH"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(28)))
+        brushSection.addView(toolButton("Text", "Add or edit movable text") { showTextEditor(canvas) }, LinearLayout.LayoutParams(if (sideToolbar) ViewGroup.LayoutParams.MATCH_PARENT else dp(64), dp(44)).apply {
+            if (!sideToolbar) marginEnd = dp(8)
+        })
+        widthLabel = TextView(this).apply {
+            text = "Width ${draw.getDrawWidth().toInt()} px"
+            textSize = 13f
+            setTextColor(getColor(R.color.paint_text))
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        brushSection.addView(widthLabel, LinearLayout.LayoutParams(if (sideToolbar) ViewGroup.LayoutParams.MATCH_PARENT else dp(82), dp(44)))
         widthSlider = SeekBar(this).apply {
             max = MAX_BRUSH_WIDTH - MIN_BRUSH_WIDTH
             progress = draw.getDrawWidth().toInt().coerceIn(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH) - MIN_BRUSH_WIDTH
+            progressTintList = ColorStateList.valueOf(getColor(R.color.teal_200))
+            thumbTintList = ColorStateList.valueOf(getColor(R.color.teal_200))
+            progressBackgroundTintList = ColorStateList.valueOf(getColor(R.color.paint_control))
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     val width = (progress + MIN_BRUSH_WIDTH).toFloat()
@@ -225,15 +267,30 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
                 override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
             })
         }
-        widthRow.addView(widthSlider, LinearLayout.LayoutParams(0, dp(40), 1f))
-        toolbar.addView(widthRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)))
+        brushSection.addView(widthSlider, LinearLayout.LayoutParams(if (sideToolbar) ViewGroup.LayoutParams.MATCH_PARENT else 0, dp(44), if (sideToolbar) 0f else 1f))
+        toolbar.addView(brushSection, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, if (sideToolbar) ViewGroup.LayoutParams.WRAP_CONTENT else dp(54)))
 
-        val foldControls = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; visibility = View.GONE }
-        foldProgressLabel = TextView(this).apply { text = "Fold 50%"; textSize = 12f }
-        foldControls.addView(foldProgressLabel, LinearLayout.LayoutParams(dp(64), dp(40)))
+        val compactToolbar = resources.configuration.screenWidthDp < COMPACT_WIDTH_DP &&
+            resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+        val foldControls = LinearLayout(this).apply {
+            orientation = if (sideToolbar || compactToolbar) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            if (sideToolbar) setPadding(0, dp(12), 0, 0) else setPadding(0, dp(4), 0, 0)
+        }
+        foldProgressLabel = TextView(this).apply {
+            text = "Fold position · 50%"
+            textSize = 13f
+            setTextColor(getColor(R.color.paint_text))
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        foldControls.addView(foldProgressLabel, LinearLayout.LayoutParams(if (sideToolbar || compactToolbar) ViewGroup.LayoutParams.MATCH_PARENT else dp(102), dp(40)))
         foldProgressSlider = SeekBar(this).apply {
             max = 100
             progress = 50
+            progressTintList = ColorStateList.valueOf(getColor(R.color.teal_200))
+            thumbTintList = ColorStateList.valueOf(getColor(R.color.teal_200))
+            progressBackgroundTintList = ColorStateList.valueOf(getColor(R.color.paint_control))
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     foldProgressLabel?.text = "Fold ${progress.coerceIn(5, 100)}%"
@@ -243,21 +300,54 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
                 override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
             })
         }
-        foldControls.addView(foldProgressSlider, LinearLayout.LayoutParams(0, dp(40), 1f))
+        foldControls.addView(foldProgressSlider, LinearLayout.LayoutParams(if (sideToolbar || compactToolbar) ViewGroup.LayoutParams.MATCH_PARENT else 0, dp(44), if (sideToolbar || compactToolbar) 0f else 1f))
         yieldButton = toolButton("End turn", "End your drawing turn and add handoff metadata") { app.endTurnOrYield() }
-        foldControls.addView(yieldButton, LinearLayout.LayoutParams(dp(72), dp(40)))
         endSessionButton = toolButton("End session", "End the session and reveal the whole drawing") { confirmFoldFinish() }
-        foldControls.addView(endSessionButton, LinearLayout.LayoutParams(dp(96), dp(40)))
-        toolbar.addView(foldControls, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)))
+        if (sideToolbar || compactToolbar) {
+            val foldActions = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            foldActions.addView(yieldButton, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginEnd = dp(6) })
+            foldActions.addView(endSessionButton, LinearLayout.LayoutParams(0, dp(48), 1f))
+            foldControls.addView(foldActions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
+        } else {
+            foldControls.addView(yieldButton, LinearLayout.LayoutParams(dp(78), dp(44)).apply { marginStart = dp(4) })
+            foldControls.addView(endSessionButton, LinearLayout.LayoutParams(dp(102), dp(44)).apply { marginStart = dp(4) })
+        }
+        toolbar.addView(foldControls, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            if (sideToolbar || compactToolbar) ViewGroup.LayoutParams.WRAP_CONTENT else dp(52),
+        ))
         foldRow = foldControls
 
-        val toolbarParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(96), Gravity.BOTTOM)
-        root.addView(toolbar, toolbarParams)
-        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
-            val bottomInset = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
-            (toolbar.layoutParams as FrameLayout.LayoutParams).apply { bottomMargin = bottomInset }
-            canvas.setBottomControlsHeight(if (app.foldSessionActive) dp(136) else dp(96))
-            insets
+        if (sideToolbar) {
+            val content = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            content.setBackgroundColor(getColor(R.color.paint_workspace))
+            val scroll = ScrollView(this).apply {
+                isFillViewport = true
+                addView(toolbar, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }
+            content.addView(scroll, LinearLayout.LayoutParams(dp(TABLET_TOOLBAR_WIDTH_DP), ViewGroup.LayoutParams.MATCH_PARENT))
+            content.addView(canvas, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+            ViewCompat.setOnApplyWindowInsetsListener(content) { _, insets ->
+                canvas.setBottomControlsHeight(0)
+                insets
+            }
+            setContentView(content)
+        } else {
+            val root = FrameLayout(this).apply {
+                setBackgroundColor(getColor(R.color.paint_workspace))
+            }
+            root.addView(canvas, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            root.addView(toolbar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+            toolbar.addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
+                updateCanvasBottomControlsHeight(view)
+            }
+            ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
+                toolbarBottomInset = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
+                (toolbar.layoutParams as FrameLayout.LayoutParams).apply { bottomMargin = toolbarBottomInset }
+                updateCanvasBottomControlsHeight(toolbar)
+                insets
+            }
+            setContentView(root)
         }
         canvas.onHistoryChanged = { undoCount, redoCount ->
             undoButton?.apply { isEnabled = undoCount > 0; contentDescription = "Undo ($undoCount available)" }
@@ -266,9 +356,22 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
             refreshFoldControls()
         }
         canvas.onHistoryChanged?.invoke(canvas.undoCount(), canvas.redoCount())
-        setContentView(root)
-        ViewCompat.requestApplyInsets(root)
+        ViewCompat.requestApplyInsets(canvas.parent as View)
         refreshFoldControls()
+    }
+
+    private fun sectionLabel(label: String) = TextView(this).apply {
+        text = label
+        textSize = 11f
+        letterSpacing = 0.12f
+        setTextColor(getColor(R.color.paint_muted))
+        gravity = Gravity.CENTER_VERTICAL
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
+    }
+
+    private fun updateCanvasBottomControlsHeight(toolbar: View) {
+        if (sideToolbar) app.view?.setBottomControlsHeight(0)
+        else app.view?.setBottomControlsHeight(toolbar.height)
     }
 
     fun onFoldSessionChanged() {
@@ -346,14 +449,8 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
     private fun refreshFoldControls() {
         val active = app.foldSessionActive
         foldRow?.visibility = if (active) View.VISIBLE else View.GONE
-        drawingToolbar?.layoutParams?.let { params ->
-            val targetHeight = dp(if (active) 136 else 96)
-            if (params.height != targetHeight) {
-                params.height = targetHeight
-                drawingToolbar?.layoutParams = params
-            }
-        }
-        app.view?.setBottomControlsHeight(dp(if (active) 136 else 96))
+        drawingToolbar?.requestLayout()
+        drawingToolbar?.post { drawingToolbar?.let(::updateCanvasBottomControlsHeight) }
         val localTurn = active && app.isLocalFoldTurn() && !app.foldFinishPending && !app.foldYieldPending
         listOf(undoButton, redoButton, colorButton, brushButton, embossButton, eraserButton).forEach { it?.isEnabled = !active || localTurn }
         widthSlider?.isEnabled = !active || localTurn
@@ -363,7 +460,7 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
             if (this.progress != progress) this.progress = progress
         }
         foldProgressLabel?.apply {
-            text = "Fold ${app.foldProgressPercent()}%"
+            text = "Fold position · ${app.foldProgressPercent()}%"
             contentDescription = "Fold position ${app.foldProgressPercent()} percent. Drag the fold line or this slider to adjust it"
         }
         yieldButton?.apply {
@@ -452,21 +549,47 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
         contentDescription = description
         isAllCaps = false
         minWidth = 0
-        setPadding(dp(2), 0, dp(2), 0)
-        textSize = 14f
+        minHeight = dp(48)
+        setPadding(dp(5), 0, dp(5), 0)
+        textSize = 12f
+        setTextColor(getColor(R.color.paint_text))
+        background = controlBackground()
+        foreground = RippleDrawable(
+            ColorStateList.valueOf(0x28FFFFFF),
+            null,
+            controlBackground(),
+        )
+        elevation = dp(2).toFloat()
+        backgroundTintList = ColorStateList.valueOf(getColor(R.color.paint_control))
         setOnClickListener { action() }
     }
 
-    private fun addTool(row: LinearLayout, button: Button, widthDp: Int) {
-        row.addView(button, LinearLayout.LayoutParams(dp(widthDp), dp(44)).apply {
-            marginStart = dp(1)
-            marginEnd = dp(1)
-        })
+    private fun toolbarBackground(): Drawable {
+        val colors = intArrayOf(getColor(R.color.paint_surface), getColor(R.color.purple_700))
+        val radii = if (sideToolbar) {
+            floatArrayOf(0f, 0f, dp(26).toFloat(), dp(26).toFloat(), dp(26).toFloat(), dp(26).toFloat(), 0f, 0f)
+        } else {
+            floatArrayOf(dp(26).toFloat(), dp(26).toFloat(), dp(26).toFloat(), dp(26).toFloat(), 0f, 0f, 0f, 0f)
+        }
+        return GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, colors).apply {
+            cornerRadii = radii
+            setStroke(dp(1), 0x263DCDBE)
+        }
+    }
+
+    private fun controlBackground(): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(15).toFloat()
+        setColor(getColor(R.color.paint_control))
+        setStroke(dp(1), 0x354F5976)
     }
 
     private fun updateColorButton(color: Int) {
         colorButton?.apply {
-            setTextColor(color)
+            val brightness = Color.red(color) * 0.299 + Color.green(color) * 0.587 + Color.blue(color) * 0.114
+            setTextColor(if (brightness > 150) 0xFF20333D.toInt() else Color.WHITE)
+            backgroundTintList = ColorStateList.valueOf(color)
+            elevation = dp(4).toFloat()
             contentDescription = "Choose color, current color ${String.format("#%08X", color)}"
         }
     }
@@ -474,24 +597,30 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
     private fun updateBrushButton(style: BrushStyle) {
         brushButton?.apply {
             text = brushLabel(style)
+            isSelected = true
+            backgroundTintList = ColorStateList.valueOf(getColor(R.color.paint_control_selected))
+            setTextColor(getColor(R.color.white))
             contentDescription = "Brush: ${style.name.lowercase()}"
         }
     }
 
     private fun updateEraserButton(enabled: Boolean) {
         eraserButton?.apply {
-            text = if (enabled) "Erasing" else "Erase"
+            text = if (enabled) "Erasing" else "Eraser"
             isSelected = enabled
             contentDescription = if (enabled) "Eraser on" else "Eraser off"
-            backgroundTintList = ColorStateList.valueOf(if (enabled) 0xFFFFD180.toInt() else 0xFFE1E1E1.toInt())
+            backgroundTintList = ColorStateList.valueOf(getColor(if (enabled) R.color.paint_control_warm else R.color.paint_control))
+            setTextColor(getColor(if (enabled) R.color.purple_700 else R.color.paint_text))
         }
     }
 
     private fun updateEmbossButton(enabled: Boolean) {
         embossButton?.apply {
             isSelected = enabled
+            text = "Emboss"
             contentDescription = if (enabled) "Emboss on" else "Emboss off"
-            backgroundTintList = ColorStateList.valueOf(if (enabled) 0xFFFFD180.toInt() else 0xFFE1E1E1.toInt())
+            backgroundTintList = ColorStateList.valueOf(getColor(if (enabled) R.color.paint_control_warm else R.color.paint_control))
+            setTextColor(getColor(if (enabled) R.color.purple_700 else R.color.paint_text))
         }
     }
 
@@ -557,6 +686,10 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
         private const val TEXT_SIZE_MIN = 12
         private const val TEXT_SIZE_MAX = 180
         private const val DEFAULT_TEXT_SIZE = 44f
+        private const val TABLET_LANDSCAPE_WIDTH_DP = 840
+        private const val TABLET_MIN_WIDTH_DP = 600
+        private const val TABLET_TOOLBAR_WIDTH_DP = 248
+        private const val COMPACT_WIDTH_DP = 600
         // Semantic family names stay stable over the wire; each platform maps them to its system face.
         private val TEXT_FONTS = listOf("Sans" to "sans", "Serif" to "serif", "Monospace" to "mono")
     }

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="paint_surface">#FF151624</color>
+    <color name="paint_control">#FF25283D</color>
+    <color name="paint_control_selected">#FF565BD0</color>
+    <color name="paint_control_warm">#FF71463F</color>
+    <color name="paint_text">#FFF4F3FA</color>
+    <color name="paint_muted">#FFA7AAC0</color>
+    <color name="paint_workspace">#FF202235</color>
+</resources>
