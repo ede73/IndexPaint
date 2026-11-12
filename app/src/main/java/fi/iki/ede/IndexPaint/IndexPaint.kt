@@ -10,7 +10,8 @@ import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.drawable.Drawable
-import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -181,9 +182,9 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
 
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(if (sideToolbar) 16 else 10), dp(10), dp(if (sideToolbar) 16 else 10), dp(10))
-            background = ColorDrawable(getColor(R.color.paint_surface))
-            elevation = dp(8).toFloat()
+            setPadding(dp(if (sideToolbar) 18 else 14), dp(12), dp(if (sideToolbar) 18 else 14), dp(12))
+            background = toolbarBackground()
+            elevation = dp(14).toFloat()
             contentDescription = "Drawing tools"
         }
         drawingToolbar = toolbar
@@ -253,6 +254,9 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
         widthSlider = SeekBar(this).apply {
             max = MAX_BRUSH_WIDTH - MIN_BRUSH_WIDTH
             progress = draw.getDrawWidth().toInt().coerceIn(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH) - MIN_BRUSH_WIDTH
+            progressTintList = ColorStateList.valueOf(getColor(R.color.teal_200))
+            thumbTintList = ColorStateList.valueOf(getColor(R.color.teal_200))
+            progressBackgroundTintList = ColorStateList.valueOf(getColor(R.color.paint_control))
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     val width = (progress + MIN_BRUSH_WIDTH).toFloat()
@@ -284,6 +288,9 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
         foldProgressSlider = SeekBar(this).apply {
             max = 100
             progress = 50
+            progressTintList = ColorStateList.valueOf(getColor(R.color.teal_200))
+            thumbTintList = ColorStateList.valueOf(getColor(R.color.teal_200))
+            progressBackgroundTintList = ColorStateList.valueOf(getColor(R.color.paint_control))
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     foldProgressLabel?.text = "Fold ${progress.coerceIn(5, 100)}%"
@@ -313,6 +320,7 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
 
         if (sideToolbar) {
             val content = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            content.setBackgroundColor(getColor(R.color.paint_workspace))
             val scroll = ScrollView(this).apply {
                 isFillViewport = true
                 addView(toolbar, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -325,7 +333,9 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
             }
             setContentView(content)
         } else {
-            val root = FrameLayout(this)
+            val root = FrameLayout(this).apply {
+                setBackgroundColor(getColor(R.color.paint_workspace))
+            }
             root.addView(canvas, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             root.addView(toolbar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
             toolbar.addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
@@ -353,7 +363,7 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
     private fun sectionLabel(label: String) = TextView(this).apply {
         text = label
         textSize = 11f
-        letterSpacing = 0.08f
+        letterSpacing = 0.12f
         setTextColor(getColor(R.color.paint_muted))
         gravity = Gravity.CENTER_VERTICAL
         setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -540,11 +550,38 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
         isAllCaps = false
         minWidth = 0
         minHeight = dp(48)
-        setPadding(dp(4), 0, dp(4), 0)
-        textSize = 13f
+        setPadding(dp(5), 0, dp(5), 0)
+        textSize = 12f
         setTextColor(getColor(R.color.paint_text))
+        background = controlBackground()
+        foreground = RippleDrawable(
+            ColorStateList.valueOf(0x28FFFFFF),
+            null,
+            controlBackground(),
+        )
+        elevation = dp(2).toFloat()
         backgroundTintList = ColorStateList.valueOf(getColor(R.color.paint_control))
         setOnClickListener { action() }
+    }
+
+    private fun toolbarBackground(): Drawable {
+        val colors = intArrayOf(getColor(R.color.paint_surface), getColor(R.color.purple_700))
+        val radii = if (sideToolbar) {
+            floatArrayOf(0f, 0f, dp(26).toFloat(), dp(26).toFloat(), dp(26).toFloat(), dp(26).toFloat(), 0f, 0f)
+        } else {
+            floatArrayOf(dp(26).toFloat(), dp(26).toFloat(), dp(26).toFloat(), dp(26).toFloat(), 0f, 0f, 0f, 0f)
+        }
+        return GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, colors).apply {
+            cornerRadii = radii
+            setStroke(dp(1), 0x263DCDBE)
+        }
+    }
+
+    private fun controlBackground(): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(15).toFloat()
+        setColor(getColor(R.color.paint_control))
+        setStroke(dp(1), 0x354F5976)
     }
 
     private fun updateColorButton(color: Int) {
@@ -552,6 +589,7 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
             val brightness = Color.red(color) * 0.299 + Color.green(color) * 0.587 + Color.blue(color) * 0.114
             setTextColor(if (brightness > 150) 0xFF20333D.toInt() else Color.WHITE)
             backgroundTintList = ColorStateList.valueOf(color)
+            elevation = dp(4).toFloat()
             contentDescription = "Choose color, current color ${String.format("#%08X", color)}"
         }
     }
@@ -561,6 +599,7 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
             text = brushLabel(style)
             isSelected = true
             backgroundTintList = ColorStateList.valueOf(getColor(R.color.paint_control_selected))
+            setTextColor(getColor(R.color.white))
             contentDescription = "Brush: ${style.name.lowercase()}"
         }
     }
@@ -571,6 +610,7 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
             isSelected = enabled
             contentDescription = if (enabled) "Eraser on" else "Eraser off"
             backgroundTintList = ColorStateList.valueOf(getColor(if (enabled) R.color.paint_control_warm else R.color.paint_control))
+            setTextColor(getColor(if (enabled) R.color.purple_700 else R.color.paint_text))
         }
     }
 
@@ -580,6 +620,7 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
             text = "Emboss"
             contentDescription = if (enabled) "Emboss on" else "Emboss off"
             backgroundTintList = ColorStateList.valueOf(getColor(if (enabled) R.color.paint_control_warm else R.color.paint_control))
+            setTextColor(getColor(if (enabled) R.color.purple_700 else R.color.paint_text))
         }
     }
 
