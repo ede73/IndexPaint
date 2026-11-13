@@ -397,20 +397,59 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
     private fun showFoldTurnEndChoice() {
         val peer = app.peerDisplayName().takeUnless { it.isBlank() || it.equals("peer", ignoreCase = true) } ?: "your partner"
         val canPass = app.foldProgressPercent() < 100
-        val choices = if (canPass) {
-            arrayOf("Add a note for $peer, then pass the turn", "Finish the drawing and reveal it to both of you")
-        } else {
-            arrayOf("Finish the drawing and reveal it to both of you")
-        }
-        AlertDialog.Builder(this)
-            .setTitle("End your turn")
-            .setMessage(if (canPass) "What would you like to do next?" else "This is the final fold. Reveal the finished drawing to both of you.")
-            .setItems(choices) { _, which ->
-                if (canPass && which == 0) app.endTurnOrYield()
-                else app.requestFoldFinish()
+        lateinit var dialog: AlertDialog
+        val choices = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(4), dp(20), dp(4))
+            addView(TextView(this@IndexPaint).apply {
+                text = "Choose what happens next. Handoff notes stay off the final picture."
+                textSize = 14f
+                setTextColor(getColor(R.color.paint_muted))
+                setPadding(0, 0, 0, dp(12))
+            })
+            if (canPass) {
+                addView(foldChoiceRow("Add handoff note", "Add a note for $peer, then tap Done to pass the turn.") {
+                    dialog.dismiss()
+                    app.endTurnOrYield()
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    bottomMargin = dp(8)
+                })
             }
+            addView(foldChoiceRow("Finish drawing & reveal", "Show the whole picture to both of you. No further turns.") {
+                dialog.dismiss()
+                app.requestFoldFinish()
+            })
+        }
+
+        dialog = AlertDialog.Builder(this)
+            .setTitle("End your turn")
+            .setView(choices)
             .setNegativeButton("Keep drawing", null)
-            .show()
+            .create()
+        dialog.show()
+    }
+
+    private fun foldChoiceRow(title: String, description: String, action: () -> Unit) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(16), dp(12), dp(16), dp(12))
+        background = controlBackground()
+        foreground = RippleDrawable(ColorStateList.valueOf(0x28FFFFFF), null, controlBackground())
+        isClickable = true
+        isFocusable = true
+        contentDescription = "$title. $description"
+        addView(TextView(this@IndexPaint).apply {
+            text = title
+            textSize = 15f
+            setTextColor(getColor(R.color.paint_text))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        addView(TextView(this@IndexPaint).apply {
+            text = description
+            textSize = 13f
+            setTextColor(getColor(R.color.paint_muted))
+            setPadding(0, dp(3), 0, 0)
+        })
+        setOnClickListener { action() }
     }
 
     private fun createHandoffDoneButton() = toolButton("Done", "Send your handoff note and pass the turn") {
