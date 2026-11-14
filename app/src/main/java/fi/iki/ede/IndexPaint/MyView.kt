@@ -23,6 +23,7 @@ class MyView(private val app: PaintApp) : View(app) {
     val localDraw = DrawDetails(remote = false, myView = this, paintApp = app)
     val remoteDraw = DrawDetails(remote = true, myView = this, paintApp = app)
 
+    private val backgroundPaint = Paint().apply { color = context.getColor(R.color.paint_workspace) }
     private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private data class Stroke(val path: Path, val paint: Paint, val handoff: Boolean, val eraser: Boolean)
     data class TextObject(
@@ -264,13 +265,13 @@ class MyView(private val app: PaintApp) : View(app) {
         turnStatusSubtitlePaint.textSize = 12f * density
         val title = when {
             !localTurn -> "WAITING FOR PEER"
-            app.foldTurnEnded -> "HANDOFF METADATA"
+            app.foldTurnEnded -> "ADD A HANDOFF NOTE"
             else -> "YOUR TURN"
         }
         val subtitle = when {
             !localTurn -> "Turn ${app.foldIndex + 1} · ${app.peerDisplayName()} is drawing"
-            app.foldTurnEnded -> "Draw or tap Text · Yield sends notes"
-            else -> "Turn ${app.foldIndex + 1} · End turn when ready"
+            app.foldTurnEnded -> "Draw or tap Text · Done passes the turn"
+            else -> "Turn ${app.foldIndex + 1} · End Turn to choose what happens next"
         }
         canvas.drawText(title, left + 12f * density, top + 23f * density, turnStatusTextPaint)
         canvas.drawText(subtitle, left + 12f * density, top + 43f * density, turnStatusSubtitlePaint)
@@ -747,7 +748,6 @@ class MyView(private val app: PaintApp) : View(app) {
         private const val HINTS_PREFS = "indexpaint_display"
         private const val HANDOFF_HINTS_VISIBLE = "handoff_hints_visible"
         private const val MAX_UNDO_STROKES = 10
-        private val backgroundPaint = Paint().apply { color = 0xFFAAAAAA.toInt() }
         private val bitmapPaperPaint = Paint().apply { color = Color.WHITE }
         private val pageShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
         private val foldFlapPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFF1F3F2.toInt() }

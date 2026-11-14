@@ -13,7 +13,10 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    # Keep the emulator on the runner image generation that has working KVM
+    # support for this setup. ubuntu-latest moved to 26.04 and the emulator
+    # stayed offline during boot on that image.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Check out pull request code (untrusted code stays on GitHub-hosted runner)
@@ -37,7 +40,9 @@ jobs:
       - name: Run unit tests, instrumentation tests, and unsigned debug build
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 36
+          api-level: 35
           arch: x86_64
           target: google_apis
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          disable-animations: true
           script: ./gradlew --no-daemon testDebugUnitTest connectedDebugAndroidTest assembleDebug
