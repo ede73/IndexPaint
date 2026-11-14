@@ -13,7 +13,6 @@
     <string name="mnuDisconnect">Katkaise</string>
     <string name="mnuFilterBlur">Sumenna</string>
     <string name="mnuMiscShareAs">Jaa kuva</string>
-    <string name="mnuFoldFinish">Paljasta koko piirros…</string>
     <string name="mnuHideFoldHints">Piilota vuorovihjeet</string>
     <string name="mnuShowFoldHints">Näytä vuorovihjeet</string>
     <string name="txtChooseImage">Valitse kuva</string>
