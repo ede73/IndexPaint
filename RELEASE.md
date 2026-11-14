@@ -2,7 +2,7 @@
 
 ## Publish a source to Internal testing
 
-Each command below starts one Mac runner job that builds, signs, verifies, uploads, and commits the AAB to the Internal testing track. No separate build and publish commands or run ID are needed. The workflow ref (`--ref`) selects the workflow version; `source_ref` selects the app code to publish. After PR #5 is merged, use `--ref main` as shown. While it is still open, use `--ref codex/release-lint-fix`.
+Each command below starts one Mac runner job that builds, signs, verifies, uploads, and commits the AAB to the Internal testing track. No separate build and publish commands or run ID are needed. The workflow ref (`--ref`) selects the workflow version; `source_ref` selects the app code to publish. After this workflow is merged, use `--ref main`. While reviewing the workflow PR, select the branch that contains the workflow.
 
 Publish whatever `main` points to when the runner checks it out:
 
@@ -61,7 +61,7 @@ First check that GitHub CLI is authenticated as `ede73`:
 gh auth status
 ```
 
-For these operations, use `--ref main` after the workflow changes are merged. Until then, use `--ref codex/release-lint-fix`. `source_ref` is the app source and can be different from the workflow ref.
+For these operations, use `--ref main` after the workflow changes are merged. While reviewing the workflow PR, use the branch that contains the workflow. `source_ref` is the app source and can be different from the workflow ref.
 
 ```sh
 REPO=ede73/IndexPaint
@@ -110,7 +110,7 @@ Each AAB artifact includes `app-release.aab`, its SHA-256 file, and `provenance.
 
 1. Open the IndexPaint repository and choose **Actions → Android Release**.
 2. Choose **Run workflow**.
-3. Select the workflow branch in the branch dropdown. Use `main` after the workflow changes are merged; until then select `codex/release-lint-fix`.
+3. Select the workflow branch in the branch dropdown. Use `main` after the workflow changes are merged; while reviewing the workflow PR, select its branch.
 4. Select the operation.
 5. For `verify_signing_inputs`, no source is built. For `build_signed` or `build_and_publish_internal`, enter the source branch, tag, commit SHA, or PR head ref in `source_ref`. For example, use `main` or `refs/pull/12/head`.
 6. For `publish_existing_internal`, enter the earlier build's run ID in `artifact_run_id`; `source_ref` remains required by the form and can be `main`.
