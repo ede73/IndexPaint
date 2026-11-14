@@ -1,5 +1,5 @@
 ---
-name: make_git_repo
+name: make-git-repo
 description: Set up or adjust GitHub repository rules, branch protection, GitHub Actions access, and safe Git workflows for this project.
 ---
 

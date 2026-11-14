@@ -1,5 +1,5 @@
 ---
-name: make_auto_publish_android
+name: make-auto-publish-android
 description: Set up an owner-controlled manual Android signing, build, and Google Play Internal testing release workflow for an existing Android project.
 ---
 
