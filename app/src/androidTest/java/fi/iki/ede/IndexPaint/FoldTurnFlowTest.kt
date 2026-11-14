@@ -31,6 +31,7 @@ class FoldTurnFlowTest {
         onView(withText("Add handoff note")).check(matches(isDisplayed()))
         onView(withText("Add a note for Test Partner, then tap Done to pass the turn.")).check(matches(isDisplayed()))
         onView(withText("Finish drawing & reveal")).check(matches(isDisplayed()))
+        captureEndTurnChoiceScreenshot()
 
         onView(withText("Add handoff note")).perform(click())
         assertTrue(app.foldTurnEnded)
@@ -98,6 +99,12 @@ class FoldTurnFlowTest {
                 invoke(app, payload)
             }
         }
+    }
+
+    private fun captureEndTurnChoiceScreenshot() {
+        InstrumentationRegistry.getInstrumentation().uiAutomation
+            .executeShellCommand("screencap -p /sdcard/fold-end-turn-choice.png")
+            .close()
     }
 
     private inline fun <reified T : DrawingMessage> awaitMessage(
