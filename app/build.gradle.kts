@@ -142,7 +142,6 @@ tasks.configureEach {
     }
     if (name == "publishReleaseBundle") {
         dependsOn(prepareLocalPlayPublisherCredential)
-        finalizedBy(removeLocalPlayPublisherCredential)
     }
 }
 

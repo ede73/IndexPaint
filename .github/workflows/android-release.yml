@@ -36,6 +36,9 @@ jobs:
     if: github.actor == 'ede73' && github.triggering_actor == 'ede73'
     runs-on: [self-hosted, macOS, indexpaint-release]
     timeout-minutes: 90
+    outputs:
+      release_tag_name: ${{ steps.release_tag.outputs.tag_name }}
+      release_tag_source_sha: ${{ steps.release_tag.outputs.source_sha }}
     env:
       ANDROID_HOME: /Users/ede/Library/Android/sdk
       ANDROID_SDK_ROOT: /Users/ede/Library/Android/sdk
@@ -74,11 +77,11 @@ jobs:
           path: source
           persist-credentials: false
 
-      - name: Check out trusted main build scripts for publishing an existing AAB
+      - name: Check out selected release scripts for publishing an existing AAB
         if: inputs.operation == 'publish_existing_internal'
         uses: actions/checkout@v7
         with:
-          ref: main
+          ref: ${{ github.ref }}
           path: source
           persist-credentials: false
 
@@ -183,7 +186,62 @@ jobs:
           INDEXPAINT_KEYSTORE_PASSWORD: ${{ secrets.INDEXPAINT_KEYSTORE_PASSWORD }}
           INDEXPAINT_KEY_PASSWORD: ${{ secrets.INDEXPAINT_KEY_PASSWORD }}
           ANDROID_PUBLISHER_CREDENTIALS: ${{ secrets.ANDROID_PUBLISHER_CREDENTIALS }}
-        run: ./gradlew --no-daemon -p "${GITHUB_WORKSPACE}/source" publishInternal
+        run: |
+          set -euo pipefail
+          trap 'rm -f "${GITHUB_WORKSPACE}/source/app/build/tmp/play-publisher/credentials.json"' EXIT
+          "${GITHUB_WORKSPACE}/source/gradlew" --no-daemon -p "${GITHUB_WORKSPACE}/source" publishInternal
+
+      - name: Prepare Internal testing release tag
+        if: inputs.operation == 'build_and_publish_internal' || inputs.operation == 'publish_existing_internal'
+        id: release_tag
+        env:
+          OPERATION: ${{ inputs.operation }}
+          BUILT_SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          BUILD_AAB: ${{ github.workspace }}/source/app/build/outputs/bundle/release/app-release.aab
+          EXISTING_AAB: ${{ runner.temp }}/indexpaint-release-aab/app-release.aab
+          EXISTING_PROVENANCE: ${{ runner.temp }}/indexpaint-release-aab/provenance.txt
+        run: |
+          set -euo pipefail
+
+          if [ "$OPERATION" = "build_and_publish_internal" ]; then
+            aab="$BUILD_AAB"
+            source_sha="$BUILT_SOURCE_SHA"
+          else
+            aab="$EXISTING_AAB"
+            if [ ! -f "$EXISTING_PROVENANCE" ]; then
+              echo "Cannot create a release tag: the existing AAB has no source provenance."
+              exit 0
+            fi
+            source_sha="$(sed -n 's/^source_sha=//p' "$EXISTING_PROVENANCE" | head -n 1)"
+          fi
+
+          if ! [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Cannot create a release tag: source provenance does not contain a full Git SHA." >&2
+            exit 1
+          fi
+
+          manifest_zip="$RUNNER_TEMP/indexpaint-release-manifest.zip"
+          python3 - "$aab" "$manifest_zip" <<'PY'
+          import sys
+          import zipfile
+
+          with zipfile.ZipFile(sys.argv[1]) as bundle:
+              manifest = bundle.read("base/manifest/AndroidManifest.xml")
+          with zipfile.ZipFile(sys.argv[2], "w", compression=zipfile.ZIP_DEFLATED) as output:
+              output.writestr("AndroidManifest.xml", manifest)
+          PY
+
+          aapt2="$(find "$ANDROID_HOME/build-tools" -type f -name aapt2 -print | sort | tail -n 1)"
+          test -x "$aapt2"
+          version_code="$("$aapt2" dump xmltree --file AndroidManifest.xml "$manifest_zip" \
+            | sed -nE 's/.*versionCode\([^)]*\)=([0-9]+).*/\1/p' | head -n 1)"
+          if ! [[ "$version_code" =~ ^[0-9]+$ ]]; then
+            echo "Could not read Android versionCode from the published AAB." >&2
+            exit 1
+          fi
+
+          echo "tag_name=indexpaint_internal_testing_${version_code}" >> "$GITHUB_OUTPUT"
+          echo "source_sha=${source_sha}" >> "$GITHUB_OUTPUT"
 
       - name: Write build provenance
         if: inputs.operation == 'build_signed' || inputs.operation == 'build_and_publish_internal'
@@ -219,3 +277,49 @@ jobs:
       - name: Remove temporary signing material
         if: always()
         run: rm -f "${RUNNER_TEMP}/indexpaint-upload.jks"
+
+  create-release-tag:
+    needs: release
+    if: >-
+      needs.release.outputs.release_tag_name != '' &&
+      github.actor == 'ede73' && github.triggering_actor == 'ede73'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Create immutable tag for the published source commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG_NAME: ${{ needs.release.outputs.release_tag_name }}
+          SOURCE_SHA: ${{ needs.release.outputs.release_tag_source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG_NAME" =~ ^indexpaint_internal_testing_[0-9]+$ ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          if gh api "repos/${REPOSITORY}/git/ref/tags/${TAG_NAME}" >/dev/null 2>&1; then
+            existing_type="$(gh api "repos/${REPOSITORY}/git/ref/tags/${TAG_NAME}" --jq '.object.type')"
+            existing_object="$(gh api "repos/${REPOSITORY}/git/ref/tags/${TAG_NAME}" --jq '.object.sha')"
+            if [ "$existing_type" = "tag" ]; then
+              existing_sha="$(gh api "repos/${REPOSITORY}/git/tags/${existing_object}" --jq '.object.sha')"
+            else
+              existing_sha="$existing_object"
+            fi
+            test "$existing_sha" = "$SOURCE_SHA" || {
+              echo "Tag ${TAG_NAME} already points to a different source commit; refusing to move it." >&2
+              exit 1
+            }
+            echo "Tag ${TAG_NAME} already points to ${SOURCE_SHA}."
+            exit 0
+          fi
+
+          tag_object="$(gh api "repos/${REPOSITORY}/git/tags" \
+            -f tag="$TAG_NAME" \
+            -f message="IndexPaint Internal testing release" \
+            -f object="$SOURCE_SHA" \
+            -f type=commit --jq '.sha')"
+          gh api "repos/${REPOSITORY}/git/refs" \
+            -f ref="refs/tags/${TAG_NAME}" \
+            -f sha="$tag_object" >/dev/null
+          echo "Created ${TAG_NAME} at ${SOURCE_SHA}."
