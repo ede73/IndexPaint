@@ -22,6 +22,7 @@ import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -63,6 +64,7 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
     private var foldGameButton: Button? = null
     private var freeDrawButton: Button? = null
     private var textEditorColor: Int? = null
+    private var handoffNotesWizardShownThisSession = false
 
     override fun onStart() {
         super.onStart()
@@ -408,7 +410,7 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
                 setPadding(0, 0, 0, dp(12))
             })
             if (canPass) {
-                addView(foldChoiceRow("Add handoff note", "Add a note for $peer, then tap Done to pass the turn.") {
+                addView(foldChoiceRow("Add an optional note", "Draw or type a hint for $peer. You can also pass without a note.") {
                     dialog.dismiss()
                     app.endTurnOrYield()
                 }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -452,7 +454,7 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
         setOnClickListener { action() }
     }
 
-    private fun createHandoffDoneButton() = toolButton("Done", "Send your handoff note and pass the turn") {
+    private fun createHandoffDoneButton() = toolButton("Done", "Pass the turn and send any optional handoff notes") {
         app.endTurnOrYield()
     }.apply {
         textSize = 14f
@@ -460,6 +462,95 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
         setPadding(dp(20), 0, dp(20), 0)
         backgroundTintList = ColorStateList.valueOf(getColor(R.color.purple_500))
         elevation = dp(8).toFloat()
+    }
+
+    fun showHandoffNotesTutorialIfNeeded(): Boolean {
+        if (handoffNotesWizardShownThisSession ||
+            getSharedPreferences(HANDOFF_TUTORIAL_PREFS, MODE_PRIVATE)
+                .getBoolean(HANDOFF_TUTORIAL_DONT_SHOW, false)
+        ) return false
+
+        handoffNotesWizardShownThisSession = true
+        val steps = listOf(
+            "Notes are optional" to "Handover notes are clues for the next drawer. They can see them while drawing, but they never appear in the finished picture. You can pass your turn without adding any note.",
+            "Draw a quick hint" to "After choosing Add an optional note, drag your finger on the canvas to sketch. Use Undo or Erase to change it. Your note is kept separate from the drawing.",
+            "Type a hint, then pass" to "Tap Text on the toolbar, type a message, tap Add, and drag it into place. Tap Done when ready. Done works with a sketch, text, or no note at all."
+        )
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(8), dp(24), dp(8))
+        }
+        val progress = TextView(this).apply {
+            textSize = 12f
+            setTextColor(getColor(R.color.paint_muted))
+        }
+        val heading = TextView(this).apply {
+            textSize = 19f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(getColor(R.color.paint_text))
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        val body = TextView(this).apply {
+            textSize = 15f
+            setTextColor(getColor(R.color.paint_muted))
+            setLineSpacing(dp(3).toFloat(), 1f)
+        }
+        val dontShowAgain = CheckBox(this).apply {
+            text = "Don't show this again"
+            setTextColor(getColor(R.color.paint_text))
+            setPadding(0, dp(12), 0, 0)
+        }
+        content.addView(progress)
+        content.addView(heading)
+        content.addView(body)
+        content.addView(dontShowAgain)
+
+        var step = 0
+        lateinit var dialog: AlertDialog
+        fun renderStep() {
+            progress.text = "${step + 1} of ${steps.size}"
+            heading.text = steps[step].first
+            body.text = steps[step].second
+            dialog.setTitle("A quick guide to handover notes")
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.apply {
+                isEnabled = step > 0
+                visibility = if (step > 0) View.VISIBLE else View.INVISIBLE
+            }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.text =
+                if (step == steps.lastIndex) "Start drawing" else "Next"
+        }
+
+        dialog = AlertDialog.Builder(this)
+            .setTitle("A quick guide to handover notes")
+            .setView(content)
+            .setNegativeButton("Skip guide", null)
+            .setNeutralButton("Back", null)
+            .setPositiveButton("Next", null)
+            .create()
+        dialog.setOnDismissListener {
+            if (dontShowAgain.isChecked) {
+                getSharedPreferences(HANDOFF_TUTORIAL_PREFS, MODE_PRIVATE).edit()
+                    .putBoolean(HANDOFF_TUTORIAL_DONT_SHOW, true)
+                    .apply()
+            }
+        }
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            if (step == steps.lastIndex) {
+                dialog.dismiss()
+            } else {
+                step++
+                renderStep()
+            }
+        }
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+            if (step > 0) {
+                step--
+                renderStep()
+            }
+        }
+        renderStep()
+        return true
     }
 
     private fun updateHandoffDoneButtonPosition(toolbar: View) {
@@ -561,7 +652,7 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
             isEnabled = localTurn
             text = if (app.foldYieldPending) "Sending…" else "Done"
             contentDescription = if (app.foldYieldPending) "Sending the drawing and handoff notes; waiting for your partner to confirm receipt"
-                else "Send ${app.view?.pendingHandoffMarkCount() ?: 0} handoff notes and pass the turn to ${app.peerDisplayName()}"
+                else "Pass the turn to ${app.peerDisplayName()}, with or without the ${app.view?.pendingHandoffMarkCount() ?: 0} optional handoff notes"
         }
         foldActionRow?.visibility = if (app.foldTurnEnded) View.GONE else View.VISIBLE
     }
@@ -775,6 +866,8 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
         private const val TABLET_MIN_WIDTH_DP = 600
         private const val TABLET_TOOLBAR_WIDTH_DP = 248
         private const val COMPACT_WIDTH_DP = 600
+        private const val HANDOFF_TUTORIAL_PREFS = "handoff_notes_tutorial"
+        private const val HANDOFF_TUTORIAL_DONT_SHOW = "dont_show_again"
         // Semantic family names stay stable over the wire; each platform maps them to its system face.
         private val TEXT_FONTS = listOf("Sans" to "sans", "Serif" to "serif", "Monospace" to "mono")
     }

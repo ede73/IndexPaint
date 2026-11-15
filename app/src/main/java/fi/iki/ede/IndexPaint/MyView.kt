@@ -265,7 +265,7 @@ class MyView(private val app: PaintApp) : View(app) {
         turnStatusSubtitlePaint.textSize = 12f * density
         val title = when {
             !localTurn -> "WAITING FOR PEER"
-            app.foldTurnEnded -> "ADD A HANDOFF NOTE"
+            app.foldTurnEnded -> "OPTIONAL HANDOVER NOTE"
             else -> "YOUR TURN"
         }
         val subtitle = when {
