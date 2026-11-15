@@ -472,7 +472,7 @@ class IndexPaint : AppCompatActivity(), ColorPickerDialog.OnColorChangedListener
 
         handoffNotesWizardShownThisSession = true
         val steps = listOf(
-            "Notes are optional" to "Handover notes are clues for the next drawer. They can see them while drawing, but they never appear in the finished picture. You can pass your turn without adding any note.",
+            "Notes are optional" to "A handover note is a clue for the next player. They see it on the canvas during their turn, but it never appears in the finished picture. You can pass without adding a note.",
             "Draw a quick hint" to "After choosing Add an optional note, drag your finger on the canvas to sketch. Use Undo or Erase to change it. Your note is kept separate from the drawing.",
             "Type a hint, then pass" to "Tap Text on the toolbar, type a message, tap Add, and drag it into place. Tap Done when ready. Done works with a sketch, text, or no note at all."
         )
