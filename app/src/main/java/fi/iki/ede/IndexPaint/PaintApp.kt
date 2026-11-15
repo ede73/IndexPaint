@@ -442,16 +442,15 @@ class PaintApp : Application() {
             foldLayers[foldIndex] = checkNotNull(view).snapshotDrawingLayer()
             foldTurnEnded = true
             view?.beginHandoffMetadata()
-            toast("Add a note with your finger or Text, then tap Done to pass the turn. Notes stay off the final picture.")
-            (currentActivity as? IndexPaint)?.onFoldSessionChanged()
+            val activity = currentActivity as? IndexPaint
+            activity?.onFoldSessionChanged()
+            if (activity?.showHandoffNotesTutorialIfNeeded() != true) {
+                toast("Optional: draw or type a hint for the next player, or tap Done without a note.")
+            }
             updateFoldAccessibility()
             return
         }
         val drawingView = view ?: return
-        if (!drawingView.hasPendingHandoffMarks()) {
-            toast("Add a note with your finger or Text before tapping Done")
-            return
-        }
         val layer = foldLayers[foldIndex] ?: localBitmap.copy(Bitmap.Config.ARGB_8888, true)
         foldLayers[foldIndex] = layer
         val handoffMetadata = drawingView.copyPendingHandoffBitmap()
@@ -781,7 +780,7 @@ class PaintApp : Application() {
         val metadataVisible = if (view?.hasLastHandoffMetadata() == true) " Handoff metadata is visible." else ""
         canvasView.contentDescription = when {
             !isLocalFoldTurn() -> "Index Paint canvas. Waiting for ${peerDisplayName()}. Turn ${foldIndex + 1}.$metadataVisible"
-            foldTurnEnded -> "Index Paint canvas. Add a handoff note with your finger or Text, then tap Done to pass the turn. ${view?.pendingHandoffMarkCount() ?: 0} notes added.$metadataVisible"
+            foldTurnEnded -> "Index Paint canvas. Handoff notes are optional. Draw with your finger or tap Text, then tap Done to pass the turn. ${view?.pendingHandoffMarkCount() ?: 0} notes added.$metadataVisible"
             else -> "Index Paint canvas. Your turn to draw. Turn ${foldIndex + 1}. Tap End Turn to add a note for your partner and pass, or finish and reveal the drawing.$metadataVisible"
         }
     }
