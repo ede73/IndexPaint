@@ -28,13 +28,15 @@ class FoldTurnFlowTest {
 
         configureLocalTurn(scenario, app, transport)
         onView(withText("End Turn")).perform(click())
-        onView(withText("Add handoff note")).check(matches(isDisplayed()))
-        onView(withText("Add a note for Test Partner, then tap Done to pass the turn.")).check(matches(isDisplayed()))
+        onView(withText("Add an optional note")).check(matches(isDisplayed()))
+        onView(withText("Draw or type a hint for Test Partner. You can also pass without a note.")).check(matches(isDisplayed()))
         onView(withText("Finish drawing & reveal")).check(matches(isDisplayed()))
         captureEndTurnChoiceScreenshot()
 
-        onView(withText("Add handoff note")).perform(click())
+        onView(withText("Add an optional note")).perform(click())
         assertTrue(app.foldTurnEnded)
+        onView(withText("A quick guide to handover notes")).check(matches(isDisplayed()))
+        onView(withText("Skip guide")).perform(click())
         onView(withText("Done")).check(matches(isDisplayed()))
 
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
@@ -58,6 +60,27 @@ class FoldTurnFlowTest {
         deliverToApp(app, DrawingMessage.FoldFinishResponse(accepted = true))
         assertTrue(app.foldRevealed)
         assertFalse(app.foldSessionActive)
+
+        scenario.close()
+    }
+
+    @Test
+    fun donePassesTurnWithoutAnyHandoffNote() {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as PaintApp
+        val transport = RecordingTransport()
+        val scenario = ActivityScenario.launch(IndexPaint::class.java)
+
+        configureLocalTurn(scenario, app, transport)
+        onView(withText("End Turn")).perform(click())
+        onView(withText("Add an optional note")).perform(click())
+        onView(withText("Skip guide")).perform(click())
+        onView(withText("Done")).perform(click())
+
+        assertTrue("Done should pass even when no note was added", app.foldYieldPending)
+        val yield = awaitMessage<DrawingMessage.FoldYield>(transport) { it is DrawingMessage.FoldYield }
+        deliverToApp(app, DrawingMessage.FoldYieldAck(yield.messageId, yield.foldIndex, accepted = true))
+        assertFalse(app.foldYieldPending)
+        assertEquals(1, app.foldIndex)
 
         scenario.close()
     }
